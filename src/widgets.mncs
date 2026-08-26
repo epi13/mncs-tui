@@ -1,0 +1,9 @@
+mncs 0.5;
+
+// Widget identity and composition are kept separate from terminal encoding.
+module mncs_tui.widgets;
+
+enum WidgetKind { CONTAINER, TEXT, LIST, TABLE, PANE, OVERLAY, FORM, STATUS }
+
+record WidgetId { value: i64 }
+record Widget { id: WidgetId, kind: WidgetKind, parent: WidgetId }

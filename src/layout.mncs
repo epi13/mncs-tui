@@ -1,0 +1,15 @@
+mncs 0.5;
+
+// The constraint vocabulary is deliberately small until bounded solving has
+// an authoritative language-level representation.
+module mncs_tui.layout;
+
+enum Axis { HORIZONTAL, VERTICAL }
+enum Sizing { INTRINSIC, FIXED, GROW }
+
+record Constraint {
+    axis: Axis,
+    minimum: i64,
+    maximum: i64,
+    sizing: Sizing,
+}
