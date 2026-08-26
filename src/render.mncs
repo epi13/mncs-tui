@@ -1,0 +1,9 @@
+mncs 0.5;
+
+// Structured frame data is the intended input to diffing; strings are a
+// terminal-adapter concern.
+module mncs_tui.render;
+
+record Cell { column: i64, row: i64, glyph: i64, style: i64 }
+record Frame { width: i64, height: i64, cells: i64 }
+record Damage { column: i64, row: i64, width: i64, height: i64 }

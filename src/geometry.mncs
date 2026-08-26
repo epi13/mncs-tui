@@ -1,0 +1,8 @@
+mncs 0.5;
+
+// Geometry stays typed and semantic until the terminal projection boundary.
+module mncs_tui.geometry;
+
+record Point { column: i64, row: i64 }
+record Size { columns: i64, rows: i64 }
+record Rect { origin: Point, size: Size }

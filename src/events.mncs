@@ -1,0 +1,8 @@
+mncs 0.5;
+
+// Raw terminal bytes must be normalized at the adapter boundary.
+module mncs_tui.events;
+
+enum EventKind { KEY, MOUSE, PASTE, RESIZE, FOCUS, LIFECYCLE }
+
+record Event { kind: EventKind, first: i64, second: i64, modifiers: i64 }

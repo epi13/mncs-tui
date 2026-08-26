@@ -1,0 +1,16 @@
+mncs 0.5;
+
+// Initial mncs-tui fixture: geometry is data before it becomes terminal text.
+// This exercises the current record-value envelope only; layout solving and
+// terminal effects remain future framework work.
+module examples.first_layout;
+
+record Point { column: i64, row: i64 }
+record Size { columns: i64, rows: i64 }
+record Rect { origin: Point, size: Size }
+
+fn terminal_rect(columns: i64, rows: i64) -> (result: Rect) {
+    let origin: Point = Point { column: 0, row: 0 };
+    let size: Size = Size { columns: columns, rows: rows };
+    return Rect { origin: origin, size: size };
+}
