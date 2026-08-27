@@ -1,8 +1,180 @@
-mncs 0.5;
+mncs 0.8;
 
 // Geometry stays typed and semantic until the terminal projection boundary.
+// This module now consumes the canonical `mncs.core.geometry.v1` and adds
+// TUI-specific hit-region, viewport, and parent/child clipping vocabulary.
+// Base primitives (Point, Size, Rect, Insets) are imported; local types
+// describe how a widget's logical rectangle becomes a visible hit region.
 module mncs_tui.geometry;
 
-record Point { column: i64, row: i64 }
-record Size { columns: i64, rows: i64 }
-record Rect { origin: Point, size: Size }
+use mncs.core.geometry.v1;
+
+record HitRegion { widget_id: i64, bounds: Rect, clipped: Rect, visible: bool }
+record Viewport { area: Rect, clip: Rect }
+record WidgetSpan { first: i64, second: i64, rect: Rect }
+
+// Viewport helpers: the area that remains after clipping by the terminal.
+
+fn viewport_make(area: Rect, clip: Rect) -> (result: Viewport) {
+    return Viewport { area: area, clip: clip };
+}
+
+fn viewport_visible(vp: Viewport, r: Rect) -> (result: Rect) {
+    return rect_clip(r, vp.clip);
+}
+
+fn viewport_contains(vp: Viewport, p: Point) -> (result: bool) {
+    return rect_contains_point(vp.clip, p);
+}
+
+// Hit region: how a widget's logical bounds appear after clipping.
+
+fn hit_region_make(widget_id: i64, bounds: Rect, parent_clip: Rect) -> (result: HitRegion) {
+    let clipped: Rect = rect_clip(bounds, parent_clip);
+    if rect_is_empty(clipped) {
+        return HitRegion { widget_id: widget_id, bounds: bounds, clipped: clipped, visible: false };
+    }
+    return HitRegion { widget_id: widget_id, bounds: bounds, clipped: clipped, visible: true };
+}
+
+fn hit_region_visible(region: HitRegion) -> (result: bool) {
+    return region.visible;
+}
+
+fn hit_contains(region: HitRegion, p: Point) -> (result: bool) {
+    if region.visible {
+        return rect_contains_point(region.clipped, p);
+    }
+    return false;
+}
+
+fn parent_contains_child(parent: Rect, child: Rect) -> (result: bool) {
+    return rect_contains_rect(parent, child);
+}
+
+fn child_clipped_rect(child: Rect, parent: Rect) -> (result: Rect) {
+    return rect_clip(child, parent);
+}
+
+fn child_fully_visible(parent: Rect, child: Rect) -> (result: bool) {
+    return rect_contains_rect(parent, child);
+}
+
+fn child_partially_visible(parent: Rect, child: Rect) -> (result: bool) {
+    return rect_intersects(parent, child);
+}
+
+fn translate_hit(region: HitRegion, dx: i64, dy: i64) -> (result: HitRegion) {
+    let nb: Rect = rect_translate(region.bounds, dx, dy);
+    let nc: Rect = rect_translate(region.clipped, dx, dy);
+    return HitRegion { widget_id: region.widget_id, bounds: nb, clipped: nc, visible: region.visible };
+}
+
+fn viewport_translate(vp: Viewport, dx: i64, dy: i64) -> (result: Viewport) {
+    return Viewport { area: rect_translate(vp.area, dx, dy), clip: rect_translate(vp.clip, dx, dy) };
+}
+
+fn rect_from_viewport(vp: Viewport) -> (result: Rect) {
+    return vp.area;
+}
+
+fn clip_rect_to_viewport(r: Rect, vp: Viewport) -> (result: Rect) {
+    return rect_clip(r, vp.clip);
+}
+
+// Row/column addressing helpers that stay branchless via `select`.
+
+fn point_on_row(p: Point, row: i64) -> (result: bool) {
+    return p.row == row;
+}
+
+fn point_on_column(p: Point, col: i64) -> (result: bool) {
+    return p.column == col;
+}
+
+fn size_in_bounds(s: Size, limit: Size) -> (result: bool) {
+    let col_ok: bool = s.columns <= limit.columns;
+    let row_ok: bool = s.rows <= limit.rows;
+    return col_ok && row_ok;
+}
+
+fn rect_in_bounds(r: Rect, limit: Rect) -> (result: bool) {
+    return rect_contains_rect(limit, r);
+}
+
+// Anchor helpers: describe alignment within a container.
+
+fn anchor_center(parent: Rect, child: Size) -> (result: Point) {
+    if size_is_empty(child) {
+        return parent.origin;
+    }
+    let dx: i64 = (parent.size.columns -% child.columns) / 2;
+    let dy: i64 = (parent.size.rows -% child.rows) / 2;
+    let cx: i64 = select(dx < 0, 0, dx);
+    let cy: i64 = select(dy < 0, 0, dy);
+    return Point { column: parent.origin.column +% cx, row: parent.origin.row +% cy };
+}
+
+fn anchor_right(parent: Rect, child: Size) -> (result: Point) {
+    let dx: i64 = parent.size.columns -% child.columns;
+    let cx: i64 = select(dx < 0, 0, dx);
+    return Point { column: parent.origin.column +% cx, row: parent.origin.row };
+}
+
+fn anchor_bottom(parent: Rect, child: Size) -> (result: Point) {
+    let dy: i64 = parent.size.rows -% child.rows;
+    let cy: i64 = select(dy < 0, 0, dy);
+    return Point { column: parent.origin.column, row: parent.origin.row +% cy };
+}
+
+// Insets/padding application that preserves typed geometry.
+
+fn rect_with_padding(r: Rect, pad: Insets) -> (result: Rect) {
+    return rect_apply_insets(r, pad);
+}
+
+fn rect_without_padding(r: Rect, pad: Insets) -> (result: Rect) {
+    return rect_expand(r, pad);
+}
+
+// Intersection bit for dirty-region checks: returns empty rect when there is no overlap,
+// otherwise the exact overlap, with zero ambiguity.
+
+fn intersect_or_empty(a: Rect, b: Rect) -> (result: Rect) {
+    return rect_intersect(a, b);
+}
+
+fn union_bounds(a: Rect, b: Rect) -> (result: Rect) {
+    return rect_union(a, b);
+}
+
+// Hit-test over a bounded window of four regions using deterministic traversal.
+
+fn hit_test4(p: Point, r0: HitRegion, r1: HitRegion, r2: HitRegion, r3: HitRegion) -> (result: i64) {
+    let hs: [HitRegion; 4] = [r0, r1, r2, r3];
+    iterate i over hs carrying hit: i64 = 0 - 1 {
+        let candidate: HitRegion = hs[i];
+        let matches: bool = hit_contains(candidate, p);
+        let chosen: i64 = select(matches && hit == 0 - 1, candidate.widget_id, hit);
+        next hit = chosen;
+    }
+    return hit;
+}
+
+fn first_visible4(r0: HitRegion, r1: HitRegion, r2: HitRegion, r3: HitRegion) -> (result: i64) {
+    let hs: [HitRegion; 4] = [r0, r1, r2, r3];
+    iterate i over hs carrying found: i64 = 0 - 1 {
+        let c: HitRegion = hs[i];
+        let choose: bool = c.visible && found == 0 - 1;
+        next found = select(choose, c.widget_id, found);
+    }
+    return found;
+}
+
+fn count_visible4(r0: HitRegion, r1: HitRegion, r2: HitRegion, r3: HitRegion) -> (result: i64) {
+    let hs: [HitRegion; 4] = [r0, r1, r2, r3];
+    iterate i over hs carrying acc: i64 = 0 {
+        next acc = acc +% select(hs[i].visible, 1, 0);
+    }
+    return acc;
+}

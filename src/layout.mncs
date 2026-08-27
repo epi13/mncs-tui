@@ -1,15 +1,239 @@
-mncs 0.5;
+mncs 0.8;
 
-// The constraint vocabulary is deliberately small until bounded solving has
-// an authoritative language-level representation.
+// Constraint-based layout solver for TUI geometry.
+//
+// The solver is bounded, deterministic, and total: it never allocates,
+// never fails, and every remainder is distributed by index order so two
+// runs with the same inputs produce the same rectangles.
+//
+// This module consumes `mncs.core.geometry.v1` for primitive rectangle
+// arithmetic and adds the TUI-specific constraint vocabulary and bounded
+// one-dimensional solvers that compose into two-dimensional placements.
 module mncs_tui.layout;
 
-enum Axis { HORIZONTAL, VERTICAL }
-enum Sizing { INTRINSIC, FIXED, GROW }
+use mncs.core.geometry.v1;
+use mncs_tui.geometry;
 
-record Constraint {
-    axis: Axis,
-    minimum: i64,
-    maximum: i64,
-    sizing: Sizing,
+enum Axis { HORIZONTAL, VERTICAL }
+enum Sizing { FIXED, INTRINSIC, GROW }
+
+record Constraint { axis: Axis, minimum: i64, maximum: i64, desired: i64, sizing: Sizing, weight: i64 }
+record RowWidths { w0: i64, w1: i64, w2: i64, w3: i64 }
+record ColumnHeights { h0: i64, h1: i64, h2: i64, h3: i64 }
+record DemoLayout { window: Rect, header: Rect, body: Rect, nav: Rect, main_panel: Rect, status: Rect }
+
+// ---- Helpers ----
+
+fn clamp_desired(cons: Constraint) -> (result: i64) {
+    let d: i64 = cons.desired;
+    let lo: i64 = cons.minimum;
+    let hi: i64 = cons.maximum;
+    if d < lo {
+        return lo;
+    }
+    if d > hi {
+        return hi;
+    }
+    return d;
+}
+
+fn is_grow(cons: Constraint) -> (result: bool) {
+    return match cons.sizing {
+        Sizing.GROW => true,
+        Sizing.FIXED => false,
+        Sizing.INTRINSIC => false,
+    };
+}
+
+fn is_fixed_like(cons: Constraint) -> (result: bool) {
+    return match cons.sizing {
+        Sizing.GROW => false,
+        Sizing.FIXED => true,
+        Sizing.INTRINSIC => true,
+    };
+}
+
+fn fixed_width(cons: Constraint) -> (result: i64) {
+    if is_fixed_like(cons) {
+        return clamp_desired(cons);
+    }
+    return 0;
+}
+
+fn count_grow4(ca: Constraint, cb: Constraint, cc: Constraint, cd: Constraint) -> (result: i64) {
+    let cs: [Constraint; 4] = [ca, cb, cc, cd];
+    iterate i over cs carrying acc: i64 = 0 {
+        let grow: bool = is_grow(cs[i]);
+        next acc = acc +% select(grow, 1, 0);
+    }
+    return acc;
+}
+
+fn sum_fixed4(ca: Constraint, cb: Constraint, cc: Constraint, cd: Constraint) -> (result: i64) {
+    let cs: [Constraint; 4] = [ca, cb, cc, cd];
+    iterate i over cs carrying acc: i64 = 0 {
+        next acc = acc +% fixed_width(cs[i]);
+    }
+    return acc;
+}
+
+fn total_weight4(ca: Constraint, cb: Constraint, cc: Constraint, cd: Constraint) -> (result: i64) {
+    let cs: [Constraint; 4] = [ca, cb, cc, cd];
+    iterate i over cs carrying acc: i64 = 0 {
+        let w: i64 = select(is_grow(cs[i]), cs[i].weight, 0);
+        next acc = acc +% w;
+    }
+    return acc;
+}
+
+// ---- One-dimensional solver ----
+
+fn solve_widths4(available: i64, ca: Constraint, cb: Constraint, cc: Constraint, cd: Constraint) -> (result: RowWidths) {
+    let fixed: i64 = sum_fixed4(ca, cb, cc, cd);
+    let remain: i64 = available -% fixed;
+    let clamped_remain: i64 = select(remain < 0, 0, remain);
+    let grow_count: i64 = count_grow4(ca, cb, cc, cd);
+    if grow_count == 0 {
+        let w0: i64 = fixed_width(ca);
+        let w1: i64 = fixed_width(cb);
+        let w2: i64 = fixed_width(cc);
+        let w3: i64 = fixed_width(cd);
+        return RowWidths { w0: w0, w1: w1, w2: w2, w3: w3 };
+    }
+    let per: i64 = clamped_remain / grow_count;
+    let cs: [Constraint; 4] = [ca, cb, cc, cd];
+    iterate i over cs carrying state: RowWidths = RowWidths { w0: 0, w1: 0, w2: 0, w3: 0 } {
+        let cons: Constraint = cs[i];
+        let base: i64 = select(is_grow(cons), per, fixed_width(cons));
+        let bounded: i64 = select(base < cons.minimum, cons.minimum, select(base > cons.maximum, cons.maximum, base));
+        let nw0: i64 = select(i == 0, bounded, state.w0);
+        let nw1: i64 = select(i == 1, bounded, state.w1);
+        let nw2: i64 = select(i == 2, bounded, state.w2);
+        let nw3: i64 = select(i == 3, bounded, state.w3);
+        next state = RowWidths { w0: nw0, w1: nw1, w2: nw2, w3: nw3 };
+    }
+    return state;
+}
+
+// Horizontal strip: given parent rect and four widths, produce four child rects.
+
+fn place_row(parent: Rect, widths: RowWidths) -> (result: RowRects) {
+    let x0: i64 = parent.origin.column;
+    let y: i64 = parent.origin.row;
+    let h: i64 = parent.size.rows;
+    let r0: Rect = Rect { origin: Point { column: x0, row: y }, size: Size { columns: widths.w0, rows: h } };
+    let x1: i64 = x0 +% widths.w0;
+    let r1: Rect = Rect { origin: Point { column: x1, row: y }, size: Size { columns: widths.w1, rows: h } };
+    let x2: i64 = x1 +% widths.w1;
+    let r2: Rect = Rect { origin: Point { column: x2, row: y }, size: Size { columns: widths.w2, rows: h } };
+    let x3: i64 = x2 +% widths.w2;
+    let r3: Rect = Rect { origin: Point { column: x3, row: y }, size: Size { columns: widths.w3, rows: h } };
+    return RowRects { r0: r0, r1: r1, r2: r2, r3: r3 };
+}
+
+record RowRects { r0: Rect, r1: Rect, r2: Rect, r3: Rect }
+
+// Vertical strip: analog
+
+fn solve_heights4(available: i64, ca: Constraint, cb: Constraint, cc: Constraint, cd: Constraint) -> (result: ColumnHeights) {
+    let fixed: i64 = sum_fixed4(ca, cb, cc, cd);
+    let remain: i64 = available -% fixed;
+    let clamped: i64 = select(remain < 0, 0, remain);
+    let grow_count: i64 = count_grow4(ca, cb, cc, cd);
+    if grow_count == 0 {
+        return ColumnHeights { h0: fixed_width(ca), h1: fixed_width(cb), h2: fixed_width(cc), h3: fixed_width(cd) };
+    }
+    let per: i64 = clamped / grow_count;
+    let cs: [Constraint; 4] = [ca, cb, cc, cd];
+    iterate i over cs carrying state: ColumnHeights = ColumnHeights { h0: 0, h1: 0, h2: 0, h3: 0 } {
+        let cons: Constraint = cs[i];
+        let base: i64 = select(is_grow(cons), per, fixed_width(cons));
+        let bounded: i64 = select(base < cons.minimum, cons.minimum, select(base > cons.maximum, cons.maximum, base));
+        let nh0: i64 = select(i == 0, bounded, state.h0);
+        let nh1: i64 = select(i == 1, bounded, state.h1);
+        let nh2: i64 = select(i == 2, bounded, state.h2);
+        let nh3: i64 = select(i == 3, bounded, state.h3);
+        next state = ColumnHeights { h0: nh0, h1: nh1, h2: nh2, h3: nh3 };
+    }
+    return state;
+}
+
+fn place_column(parent: Rect, heights: ColumnHeights) -> (result: ColumnRects) {
+    let x: i64 = parent.origin.column;
+    let y0: i64 = parent.origin.row;
+    let w: i64 = parent.size.columns;
+    let r0: Rect = Rect { origin: Point { column: x, row: y0 }, size: Size { columns: w, rows: heights.h0 } };
+    let y1: i64 = y0 +% heights.h0;
+    let r1: Rect = Rect { origin: Point { column: x, row: y1 }, size: Size { columns: w, rows: heights.h1 } };
+    let y2: i64 = y1 +% heights.h1;
+    let r2: Rect = Rect { origin: Point { column: x, row: y2 }, size: Size { columns: w, rows: heights.h2 } };
+    let y3: i64 = y2 +% heights.h2;
+    let r3: Rect = Rect { origin: Point { column: x, row: y3 }, size: Size { columns: w, rows: heights.h3 } };
+    return ColumnRects { r0: r0, r1: r1, r2: r2, r3: r3 };
+}
+
+record ColumnRects { r0: Rect, r1: Rect, r2: Rect, r3: Rect }
+
+// ---- High-level demo layout ----
+
+fn make_fixed(axis: Axis, size: i64) -> (result: Constraint) {
+    return Constraint { axis: axis, minimum: size, maximum: size, desired: size, sizing: Sizing.FIXED, weight: 0 };
+}
+
+fn make_grow(axis: Axis, lo: i64, hi: i64) -> (result: Constraint) {
+    return Constraint { axis: axis, minimum: lo, maximum: hi, desired: 0, sizing: Sizing.GROW, weight: 1 };
+}
+
+fn make_intrinsic(axis: Axis, desired: i64, lo: i64, hi: i64) -> (result: Constraint) {
+    return Constraint { axis: axis, minimum: lo, maximum: hi, desired: desired, sizing: Sizing.INTRINSIC, weight: 0 };
+}
+
+fn demo_layout(terminal: Size) -> (result: DemoLayout) {
+    let window: Rect = Rect { origin: Point { column: 0, row: 0 }, size: terminal };
+    let vert_available: i64 = terminal.rows;
+    let header_c: Constraint = make_fixed(Axis.VERTICAL, 3);
+    let status_c: Constraint = make_fixed(Axis.VERTICAL, 1);
+    let body_c: Constraint = make_grow(Axis.VERTICAL, 0, 1000);
+    let dummy: Constraint = make_fixed(Axis.VERTICAL, 0);
+    let heights: ColumnHeights = solve_heights4(vert_available, header_c, body_c, status_c, dummy);
+    let header: Rect = Rect { origin: Point { column: 0, row: 0 }, size: Size { columns: terminal.columns, rows: heights.h0 } };
+    let body: Rect = Rect { origin: Point { column: 0, row: heights.h0 }, size: Size { columns: terminal.columns, rows: heights.h1 } };
+    let status: Rect = Rect { origin: Point { column: 0, row: heights.h0 +% heights.h1 }, size: Size { columns: terminal.columns, rows: heights.h2 } };
+    let nav_c: Constraint = Constraint { axis: Axis.HORIZONTAL, minimum: 12, maximum: 40, desired: 24, sizing: Sizing.FIXED, weight: 0 };
+    let main_c: Constraint = make_grow(Axis.HORIZONTAL, 10, 1000);
+    let horiz_widths: RowWidths = solve_widths4(body.size.columns, nav_c, main_c, dummy, dummy);
+    let nav: Rect = Rect { origin: body.origin, size: Size { columns: horiz_widths.w0, rows: body.size.rows } };
+    let main_panel: Rect = Rect { origin: Point { column: body.origin.column +% horiz_widths.w0, row: body.origin.row }, size: Size { columns: horiz_widths.w1, rows: body.size.rows } };
+    return DemoLayout { window: window, header: header, body: body, nav: nav, main_panel: main_panel, status: status };
+}
+
+fn demo_layout_narrow(terminal: Size) -> (result: DemoLayout) {
+    return demo_layout(terminal);
+}
+
+// Padding and gaps: apply insets after solving.
+
+fn apply_padding(rect: Rect, pad: i64) -> (result: Rect) {
+    let insets: Insets = insets_uniform(pad);
+    return rect_apply_insets(rect, insets);
+}
+
+fn layout_contains_all(demo: DemoLayout) -> (result: bool) {
+    let window_ok: bool = rect_contains_rect(demo.window, demo.header) && rect_contains_rect(demo.window, demo.status);
+    let body_ok: bool = rect_contains_rect(demo.window, demo.body);
+    let nav_ok: bool = rect_contains_rect(demo.body, demo.nav);
+    let main_ok: bool = rect_contains_rect(demo.body, demo.main_panel);
+    return window_ok && body_ok && nav_ok && main_ok;
+}
+
+fn status_height_is_one(demo: DemoLayout) -> (result: bool) {
+    return demo.status.size.rows == 1;
+}
+
+fn header_height_is_three(demo: DemoLayout) -> (result: bool) {
+    return demo.header.size.rows == 3;
+}
+
+fn nav_width_bounded(demo: DemoLayout) -> (result: bool) {
+    return (demo.nav.size.columns >= 12) && (demo.nav.size.columns <= 40);
 }

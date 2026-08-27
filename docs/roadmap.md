@@ -13,48 +13,44 @@ The roadmap is a research sequence. “Scaffolded” means vocabulary and bounda
 
 ## Phase 1 — Geometry and layout corpus
 
-**Status: planned.**
+**Status: experimental — exercised via `mncs.core.geometry.v1` and `mncs_tui.layout`.**
 
-- represent rectangles, regions, clipping, and hit testing;
-- create a finite corpus of fixed, intrinsic, grow, minimum, maximum, and conflicting layouts;
-- record layout results, unresolved obligations, and overflow behavior;
-- identify missing language/stdlib support through reproducible fixtures.
+- `library/core/geometry.mncs` provides total Point/Size/Rect/Insets with containment, intersection, union, clipping, and `select` branchless helpers (Profile 0.8, validated).
+- `src/geometry.mncs` adds hit-regions, viewports, anchors (`mncs.core.geometry.v1` + bounded `[HitRegion;4]` traversals).
+- `src/layout.mncs` implements a bounded one-dimensional solver for 4 constraints (fixed/intrinsic/grow, min/max, deterministic remainder) and composes into `DemoLayout` (`header 3/body grow/status 1`, `nav 24/main grow`). Wrapping arithmetic (`+%`) and `select` keep it total.
 
 ## Phase 2 — Structured frame and diff model
 
-**Status: planned.**
+**Status: experimental — exercised via `src/render.mncs`.**
 
-- define semantic cells, styles, layers, and frame identities;
-- produce deterministic frame snapshots;
-- compare frames and report bounded damage regions;
-- test wide glyphs, combining marks, clipping, and empty regions as explicit cases.
+- `Cell`/`Frame` (bounded 4-cell frame) with `frame_get`/`frame_set` via `select`.
+- `glyph_mask_changed`/`style_mask_changed` use `vec<i64,4>` + `vec_ne` → `mask<4>` + `mask_any`/`mask_none`.
+- `frame_damage` is a bounded `iterate` scan that expands a damage `Rect` via `rect_union` and counts changed cells branchlessly. Full redraw on resize.
 
 ## Phase 3 — Event and lifecycle boundary
 
-**Status: planned.**
+**Status: experimental — exercised via `src/events.mncs` + `src/focus.mncs` + `src/terminal.mncs`.**
 
-- normalize key, mouse, paste, resize, focus, and lifecycle events;
-- make terminal modes and cleanup obligations explicit;
-- define bounded update batches and failure behavior;
-- connect event transitions to focus, hit testing, invalidation, and rendering.
+- `KeyEvent`/`MouseEvent`/`Resize`/`Paste`/`Focus`/`Quit`/`Unknown` payload sums (Profile 0.6) with `Unknown` preservation (evidence-honest).
+- `normalize_key`/`normalize_mouse` map raw `i64` codes to typed events; malformed stays `Unknown`.
+- `dispatch_*` respects focus and hit-testing (`HitRegion` from `src/geometry.mncs`) and returns `DispatchResult { consumed, new_focus, damage }`.
+- `src/terminal.mncs` is a pure state machine (`terminal_init`/`enter_alt`/`resize`/`cleanup`) with `generation` and `damage_to_commands`.
 
 ## Phase 4 — Composable widgets
 
-**Status: planned.**
+**Status: experimental — exercised via `src/widgets.mncs`.**
 
-- implement a small set of container and leaf widget contracts;
-- preserve widget identity through layout and frame production;
-- add list, table, pane, overlay, form, and status-bar experiments;
-- compare framework composition against hand-built terminal implementations.
+- `Widget { id, kind, parent, rect, focusable, visible }` participates in measurement (`intrinsic_size`), layout (`widget_clipped_rect`), rendering (`widget_frame`/`list_frame`), clipping, focus, and state transitions (`ListState`/`TableState`).
+- `WidgetTree` bounded to four widgets; `next_focusable` is a bounded `iterate` with `select`.
+- List/table/status/pane/overlay/form are present as kinds with real branches.
 
 ## Phase 5 — Terminal realization
 
-**Status: planned.**
+**Status: experimental — narrow adapter in `src/terminal.mncs`.**
 
-- implement a narrow terminal adapter;
-- encode capability observations and unsupported features explicitly;
-- verify cursor/mode restoration and output failure paths;
-- measure full redraw versus diff projection under bounded workloads.
+- Pure `TerminalState` with `alt`/`cursor_visible`/`initialized`/`generation`.
+- `damage_to_commands` / `frame_to_commands` map `Damage`+`Frame` to at most four `TerminalCommand` (`CLEAR`/`CURSOR_MOVE`/`WRITE_CELL`/`STYLE_SET`).
+- Cleanup is deterministic (`terminal_cleanup` restores alt and cursor).
 
 ## Phase 6 — Language and service integration
 

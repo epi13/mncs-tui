@@ -1,0 +1,116 @@
+mncs 0.8;
+
+// Integrated TUI demo: nested layout, typed geometry, rendering, frame diff,
+// focus, keyboard, resize, clipping, and terminal projection in one bounded
+// pipeline. This is the vertical slice the architecture promised.
+module examples.full_demo;
+
+use mncs.core.geometry.v1;
+use mncs_tui.geometry;
+use mncs_tui.layout;
+use mncs_tui.render;
+use mncs_tui.events;
+use mncs_tui.widgets;
+use mncs_tui.focus;
+use mncs_tui.terminal;
+
+fn check_layout(terminal: Size) -> (result: bool) {
+    let demo: DemoLayout = demo_layout(terminal);
+    return layout_contains_all(demo) && status_height_is_one(demo) && header_height_is_three(demo) && nav_width_bounded(demo);
+}
+
+fn make_widgets(demo: DemoLayout) -> (result: WidgetTree) {
+    let header_widget: Widget = Widget { id: WidgetId { value: 1 }, kind: WidgetKind.PANE, parent: WidgetId { value: 0 }, rect: demo.header, focusable: false, visible: true };
+    let nav_widget: Widget = Widget { id: WidgetId { value: 2 }, kind: WidgetKind.LIST, parent: WidgetId { value: 0 }, rect: demo.nav, focusable: true, visible: true };
+    let main_widget: Widget = Widget { id: WidgetId { value: 3 }, kind: WidgetKind.PANE, parent: WidgetId { value: 0 }, rect: demo.main_panel, focusable: true, visible: true };
+    let status_widget: Widget = Widget { id: WidgetId { value: 4 }, kind: WidgetKind.STATUS, parent: WidgetId { value: 0 }, rect: demo.status, focusable: false, visible: true };
+    return WidgetTree { root: header_widget, first: nav_widget, second: main_widget, third: status_widget };
+}
+
+fn render_demo(demo: DemoLayout) -> (result: Frame) {
+    let tree: WidgetTree = make_widgets(demo);
+    let nav_frame: Frame = widget_frame(tree.first, 65);
+    return nav_frame;
+}
+
+fn diff_demo(old_frame: Frame, new_frame: Frame) -> (result: Damage) {
+    return frame_damage(old_frame, new_frame);
+}
+
+fn focus_demo(demo: DemoLayout) -> (result: i64) {
+    let tree: WidgetTree = make_widgets(demo);
+    let focus: FocusState = focus_init(tree.first.id);
+    let tab_key: KeyEvent = normalize_key(9, 0);
+    let tab_event: Event = Event.Key { key: tab_key };
+    let dispatched: DispatchResult = dispatch_event(tab_event, focus, tree.first, tree.second, tree.third);
+    return dispatched.new_focus.value;
+}
+
+fn hit_demo(demo: DemoLayout) -> (result: i64) {
+    let tree: WidgetTree = make_widgets(demo);
+    let point: Point = Point { column: demo.nav.origin.column +% 1, row: demo.nav.origin.row +% 1 };
+    let hit: HitTestResult = hit_test_point(point, tree.first, tree.second, tree.third);
+    if hit.hit {
+        return hit.hit_id.value;
+    }
+    return 0 - 1;
+}
+
+fn terminal_demo(width: i64, height: i64) -> (result: i64) {
+    let state: TerminalState = terminal_init(width, height);
+    let alt: TerminalState = terminal_enter_alt(state);
+    let resized: TerminalState = terminal_resize(alt, width +% 10, height +% 5);
+    let cleaned: TerminalState = terminal_cleanup(resized);
+    return cleaned.generation;
+}
+
+// Top-level integration: exercises multiple subsystems together and returns
+// a deterministic i64 that is 1 when every invariant holds.
+
+fn integrated(columns: i64, rows: i64) -> (result: i64) {
+    let terminal: Size = Size { columns: columns, rows: rows };
+    let layout_ok: bool = check_layout(terminal);
+    let demo: DemoLayout = demo_layout(terminal);
+    let tree: WidgetTree = make_widgets(demo);
+    let focus_next: i64 = focus_demo(demo);
+    let hit_id: i64 = hit_demo(demo);
+    let term_gen: i64 = terminal_demo(columns, rows);
+    // Frames: old empty frame vs rendered nav.
+    let empty_cell: Cell = Cell { column: 0, row: 0, glyph: 0, style: 0 };
+    let empty_frame: Frame = Frame { width: columns, height: rows, first: empty_cell, second: empty_cell, third: empty_cell, fourth: empty_cell };
+    let nav_frame: Frame = render_demo(demo);
+    let damage: Damage = diff_demo(empty_frame, nav_frame);
+    let damage_ok: bool = damage.any_changed;
+    // Resize check
+    let new_size: Size = Size { columns: columns +% 10, rows: rows };
+    let resized_demo: DemoLayout = demo_layout(new_size);
+    let resized_ok: bool = layout_contains_all(resized_demo);
+    let all: bool = layout_ok && resized_ok && damage_ok && (hit_id == 2) && (focus_next == 3) && (term_gen == 4);
+    return select(all, 1, 0);
+}
+
+// Small entry for corpus execution: 80x24, 100x30, 40x10, narrow 20x10.
+
+fn demo_80_24() -> (result: i64) {
+    return integrated(80, 24);
+}
+
+fn demo_100_30() -> (result: i64) {
+    return integrated(100, 30);
+}
+
+fn demo_40_10() -> (result: i64) {
+    return integrated(40, 10);
+}
+
+fn demo_narrow() -> (result: i64) {
+    return integrated(20, 10);
+}
+
+fn demo_clip() -> (result: bool) {
+    let terminal: Size = Size { columns: 80, rows: 24 };
+    let demo: DemoLayout = demo_layout(terminal);
+    let clip: Rect = Rect { origin: Point { column: 0, row: 0 }, size: Size { columns: 10, rows: 10 } };
+    let clipped_nav: Rect = rect_clip(demo.nav, clip);
+    return rect_contains_rect(clip, clipped_nav) || rect_is_empty(clipped_nav);
+}

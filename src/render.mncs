@@ -1,9 +1,169 @@
-mncs 0.5;
+mncs 0.8;
 
-// Structured frame data is the intended input to diffing; strings are a
-// terminal-adapter concern.
+// Structured rendering: semantic cells, frames, and branchless damage.
+//
+// Widgets produce typed Cells; frames retain coordinates, glyph identity,
+// style, and clipping. The diff stage uses the Profile 0.8 vector/mask
+// substrate and `select` to avoid data-dependent branches over cell arrays.
+
 module mncs_tui.render;
 
+use mncs.core.geometry.v1;
+use mncs_tui.geometry;
+
 record Cell { column: i64, row: i64, glyph: i64, style: i64 }
-record Frame { width: i64, height: i64, cells: i64 }
-record Damage { column: i64, row: i64, width: i64, height: i64 }
+record Frame { width: i64, height: i64, first: Cell, second: Cell, third: Cell, fourth: Cell }
+record Damage { x: i64, y: i64, w: i64, h: i64, changed_cells: i64, any_changed: bool }
+record Span { start_column: i64, length: i64, glyph: i64, style: i64 }
+
+// ---- Cell ----
+
+fn cell_equal(left: Cell, right: Cell) -> (result: bool) {
+    let pos: bool = (left.column == right.column) && (left.row == right.row);
+    let content: bool = (left.glyph == right.glyph) && (left.style == right.style);
+    return pos && content;
+}
+
+fn cell_glyph_equal(left: Cell, right: Cell) -> (result: bool) {
+    return left.glyph == right.glyph;
+}
+
+fn cell_style_equal(left: Cell, right: Cell) -> (result: bool) {
+    return left.style == right.style;
+}
+
+fn make_cell(column: i64, row: i64, glyph: i64, style: i64) -> (result: Cell) {
+    return Cell { column: column, row: row, glyph: glyph, style: style };
+}
+
+fn cell_rect(cell: Cell) -> (result: Rect) {
+    return Rect { origin: Point { column: cell.column, row: cell.row }, size: Size { columns: 1, rows: 1 } };
+}
+
+fn cell_visible(cell: Cell, viewport: Rect) -> (result: bool) {
+    return rect_contains_point(viewport, Point { column: cell.column, row: cell.row });
+}
+
+// ---- Frame access via branchless selection ----
+
+fn frame_get(frame: Frame, idx: i64) -> (result: Cell) {
+    let pick1: Cell = select(idx == 1, frame.second, frame.first);
+    let pick2: Cell = select(idx == 2, frame.third, pick1);
+    return select(idx == 3, frame.fourth, pick2);
+}
+
+fn frame_set(frame: Frame, idx: i64, value: Cell) -> (result: Frame) {
+    let nfirst: Cell = select(idx == 0, value, frame.first);
+    let nsecond: Cell = select(idx == 1, value, frame.second);
+    let nthird: Cell = select(idx == 2, value, frame.third);
+    let nfourth: Cell = select(idx == 3, value, frame.fourth);
+    return Frame { width: frame.width, height: frame.height, first: nfirst, second: nsecond, third: nthird, fourth: nfourth };
+}
+
+fn make_frame(width: i64, height: i64, pa: Cell, pb: Cell, pc: Cell, pd: Cell) -> (result: Frame) {
+    return Frame { width: width, height: height, first: pa, second: pb, third: pc, fourth: pd };
+}
+
+fn frame_equal(left: Frame, right: Frame) -> (result: bool) {
+    let dim: bool = (left.width == right.width) && (left.height == right.height);
+    if dim {
+        let ca: bool = cell_equal(left.first, right.first);
+        let cb: bool = cell_equal(left.second, right.second);
+        let cc: bool = cell_equal(left.third, right.third);
+        let cd: bool = cell_equal(left.fourth, right.fourth);
+        return ca && cb && cc && cd;
+    }
+    return false;
+}
+
+// Vector-accelerated glyph comparison: pack four glyphs into semantic vectors.
+
+fn glyph_mask_changed(old_frame: Frame, new_frame: Frame) -> (result: mask<4>) {
+    let old_glyphs: vec<i64, 4> = vector(old_frame.first.glyph, old_frame.second.glyph, old_frame.third.glyph, old_frame.fourth.glyph);
+    let new_glyphs: vec<i64, 4> = vector(new_frame.first.glyph, new_frame.second.glyph, new_frame.third.glyph, new_frame.fourth.glyph);
+    return vec_ne(old_glyphs, new_glyphs);
+}
+
+fn style_mask_changed(old_frame: Frame, new_frame: Frame) -> (result: mask<4>) {
+    let old_styles: vec<i64, 4> = vector(old_frame.first.style, old_frame.second.style, old_frame.third.style, old_frame.fourth.style);
+    let new_styles: vec<i64, 4> = vector(new_frame.first.style, new_frame.second.style, new_frame.third.style, new_frame.fourth.style);
+    return vec_ne(old_styles, new_styles);
+}
+
+fn any_glyph_changed(old_frame: Frame, new_frame: Frame) -> (result: bool) {
+    return mask_any(glyph_mask_changed(old_frame, new_frame));
+}
+
+fn any_style_changed(old_frame: Frame, new_frame: Frame) -> (result: bool) {
+    return mask_any(style_mask_changed(old_frame, new_frame));
+}
+
+fn all_glyphs_equal(old_frame: Frame, new_frame: Frame) -> (result: bool) {
+    return mask_none(glyph_mask_changed(old_frame, new_frame));
+}
+
+// Damage: bounded scan over four cells using `iterate` and `select`.
+
+fn bool_not(value: bool) -> (result: bool) {
+    return select(value, false, true);
+}
+
+fn frame_damage(old_frame: Frame, new_frame: Frame) -> (result: Damage) {
+    let dims_changed: bool = (old_frame.width != new_frame.width) || (old_frame.height != new_frame.height);
+    if dims_changed {
+        return Damage { x: 0, y: 0, w: new_frame.width, h: new_frame.height, changed_cells: 4, any_changed: true };
+    }
+    let cells: [Cell; 4] = [new_frame.first, new_frame.second, new_frame.third, new_frame.fourth];
+    let olds: [Cell; 4] = [old_frame.first, old_frame.second, old_frame.third, old_frame.fourth];
+    iterate i over cells carrying acc: Damage = Damage { x: 0, y: 0, w: 0, h: 0, changed_cells: 0, any_changed: false } {
+        let old_cell: Cell = olds[i];
+        let new_cell: Cell = cells[i];
+        let equal: bool = cell_equal(old_cell, new_cell);
+        let changed: bool = bool_not(equal);
+        let new_count: i64 = acc.changed_cells +% select(changed, 1, 0);
+        let new_any: bool = acc.any_changed || changed;
+        let cell_rect_value: Rect = cell_rect(new_cell);
+        let damage_rect: Rect = Rect { origin: Point { column: acc.x, row: acc.y }, size: Size { columns: acc.w, rows: acc.h } };
+        let empty_damage: bool = rect_is_empty(damage_rect);
+        let base_rect: Rect = select(empty_damage && changed, cell_rect_value, damage_rect);
+        let not_changed: bool = bool_not(changed);
+        let use_base: bool = empty_damage || not_changed;
+        let unioned: Rect = select(use_base, base_rect, rect_union(damage_rect, cell_rect_value));
+        next acc = Damage { x: unioned.origin.column, y: unioned.origin.row, w: unioned.size.columns, h: unioned.size.rows, changed_cells: new_count, any_changed: new_any };
+    }
+    return acc;
+}
+
+fn damage_is_empty(damage: Damage) -> (result: bool) {
+    return bool_not(damage.any_changed);
+}
+
+fn damage_count(damage: Damage) -> (result: i64) {
+    return damage.changed_cells;
+}
+
+fn damage_covers_all(damage: Damage, frame: Frame) -> (result: bool) {
+    let covers: bool = (damage.x == 0) && (damage.y == 0) && (damage.w == frame.width) && (damage.h == frame.height);
+    return covers && damage.any_changed;
+}
+
+fn frame_clip(frame: Frame, clip: Rect) -> (result: Frame) {
+    let viewport: Rect = clip;
+    let ca: Cell = select(cell_visible(frame.first, viewport), frame.first, Cell { column: frame.first.column, row: frame.first.row, glyph: 0, style: 0 });
+    let cb: Cell = select(cell_visible(frame.second, viewport), frame.second, Cell { column: frame.second.column, row: frame.second.row, glyph: 0, style: 0 });
+    let cc: Cell = select(cell_visible(frame.third, viewport), frame.third, Cell { column: frame.third.column, row: frame.third.row, glyph: 0, style: 0 });
+    let cd: Cell = select(cell_visible(frame.fourth, viewport), frame.fourth, Cell { column: frame.fourth.column, row: frame.fourth.row, glyph: 0, style: 0 });
+    return Frame { width: frame.width, height: frame.height, first: ca, second: cb, third: cc, fourth: cd };
+}
+
+fn frame_translate(frame: Frame, dx: i64, dy: i64) -> (result: Frame) {
+    let ta: Cell = Cell { column: frame.first.column +% dx, row: frame.first.row +% dy, glyph: frame.first.glyph, style: frame.first.style };
+    let tb: Cell = Cell { column: frame.second.column +% dx, row: frame.second.row +% dy, glyph: frame.second.glyph, style: frame.second.style };
+    let tc: Cell = Cell { column: frame.third.column +% dx, row: frame.third.row +% dy, glyph: frame.third.glyph, style: frame.third.style };
+    let td: Cell = Cell { column: frame.fourth.column +% dx, row: frame.fourth.row +% dy, glyph: frame.fourth.glyph, style: frame.fourth.style };
+    return Frame { width: frame.width, height: frame.height, first: ta, second: tb, third: tc, fourth: td };
+}
+
+fn unchanged_span(old_frame: Frame, new_frame: Frame) -> (result: bool) {
+    return frame_equal(old_frame, new_frame);
+}
