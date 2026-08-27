@@ -122,13 +122,15 @@ fn frame_damage(old_frame: Frame, new_frame: Frame) -> (result: Damage) {
         let changed: bool = bool_not(equal);
         let new_count: i64 = acc.changed_cells +% select(changed, 1, 0);
         let new_any: bool = acc.any_changed || changed;
-        let cell_rect_value: Rect = cell_rect(new_cell);
+        let old_rect: Rect = cell_rect(old_cell);
+        let new_rect: Rect = cell_rect(new_cell);
+        let both_rect: Rect = rect_union(old_rect, new_rect);
         let damage_rect: Rect = Rect { origin: Point { column: acc.x, row: acc.y }, size: Size { columns: acc.w, rows: acc.h } };
         let empty_damage: bool = rect_is_empty(damage_rect);
-        let base_rect: Rect = select(empty_damage && changed, cell_rect_value, damage_rect);
+        let base_rect: Rect = select(empty_damage && changed, both_rect, damage_rect);
         let not_changed: bool = bool_not(changed);
         let use_base: bool = empty_damage || not_changed;
-        let unioned: Rect = select(use_base, base_rect, rect_union(damage_rect, cell_rect_value));
+        let unioned: Rect = select(use_base, base_rect, rect_union(damage_rect, both_rect));
         next acc = Damage { x: unioned.origin.column, y: unioned.origin.row, w: unioned.size.columns, h: unioned.size.rows, changed_cells: new_count, any_changed: new_any };
     }
     return acc;

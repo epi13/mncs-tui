@@ -53,14 +53,15 @@ fn focus_contains(state: FocusState, widget: Widget) -> (result: bool) {
 fn hit_test_mouse(mouse: MouseEvent, first: Widget, second: Widget, third: Widget) -> (result: HitTestResult) {
     if mouse.valid {
         let point: Point = Point { column: mouse.column, row: mouse.row };
-        if widget_contains_point(first, point) {
-            return HitTestResult { hit_id: first.id, hit: true };
+        // Topmost/third first, then second, then first (deepest visible).
+        if widget_contains_point(third, point) {
+            return HitTestResult { hit_id: third.id, hit: true };
         }
         if widget_contains_point(second, point) {
             return HitTestResult { hit_id: second.id, hit: true };
         }
-        if widget_contains_point(third, point) {
-            return HitTestResult { hit_id: third.id, hit: true };
+        if widget_contains_point(first, point) {
+            return HitTestResult { hit_id: first.id, hit: true };
         }
         return HitTestResult { hit_id: WidgetId { value: 0 - 1 }, hit: false };
     }
@@ -68,14 +69,15 @@ fn hit_test_mouse(mouse: MouseEvent, first: Widget, second: Widget, third: Widge
 }
 
 fn hit_test_point(point: Point, first: Widget, second: Widget, third: Widget) -> (result: HitTestResult) {
-    if widget_contains_point(first, point) {
-        return HitTestResult { hit_id: first.id, hit: true };
+    // Topmost first for overlay ordering.
+    if widget_contains_point(third, point) {
+        return HitTestResult { hit_id: third.id, hit: true };
     }
     if widget_contains_point(second, point) {
         return HitTestResult { hit_id: second.id, hit: true };
     }
-    if widget_contains_point(third, point) {
-        return HitTestResult { hit_id: third.id, hit: true };
+    if widget_contains_point(first, point) {
+        return HitTestResult { hit_id: first.id, hit: true };
     }
     return HitTestResult { hit_id: WidgetId { value: 0 - 1 }, hit: false };
 }
