@@ -1,0 +1,195 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  validate:
+    name: Validate MNCS source
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout mncs-tui
+        uses: actions/checkout@v4
+        with:
+          repository: epi13/mncs-tui
+          path: mncs-tui
+
+      - name: Checkout mncs-language
+        uses: actions/checkout@v4
+        with:
+          repository: epi13/mncs-language
+          path: mncs-language
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            mncs-language/target
+            mncs-tui/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build mncs-cli
+        working-directory: mncs-language
+        run: cargo build --release -p mncs-cli
+
+      - name: Validate mncs-tui sources
+        working-directory: mncs-tui
+        env:
+          MNCS_LIBRARY_PATH: ${{ github.workspace }}/mncs-language/library:${{ github.workspace }}/mncs-tui/src
+        run: |
+          cargo run --manifest-path ../mncs-language/Cargo.toml -p mncs-cli -- validate src/geometry.mncs
+          cargo run --manifest-path ../mncs-language/Cargo.toml -p mncs-cli -- validate src/layout.mncs
+          cargo run --manifest-path ../mncs-language/Cargo.toml -p mncs-cli -- validate src/render.mncs
+          cargo run --manifest-path ../mncs-language/Cargo.toml -p mncs-cli -- validate src/events.mncs
+          cargo run --manifest-path ../mncs-language/Cargo.toml -p mncs-cli -- validate src/widgets.mncs
+          cargo run --manifest-path ../mncs-language/Cargo.toml -p mncs-cli -- validate src/focus.mncs
+          cargo run --manifest-path ../mncs-language/Cargo.toml -p mncs-cli -- validate src/terminal.mncs
+
+      - name: Validate examples
+        working-directory: mncs-tui
+        env:
+          MNCS_LIBRARY_PATH: ${{ github.workspace }}/mncs-language/library:${{ github.workspace }}/mncs-tui/src
+        run: |
+          cargo run --manifest-path ../mncs-language/Cargo.toml -p mncs-cli -- validate examples/full-demo.mncs
+          cargo run --manifest-path ../mncs-language/Cargo.toml -p mncs-cli -- validate examples/first-layout.mncs
+
+  test_layout:
+    name: Layout solver tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: validate
+    steps:
+      - name: Checkout mncs-tui
+        uses: actions/checkout@v4
+        with:
+          repository: epi13/mncs-tui
+          path: mncs-tui
+
+      - name: Checkout mncs-language
+        uses: actions/checkout@v4
+        with:
+          repository: epi13/mncs-language
+          path: mncs-language
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            mncs-language/target
+            mncs-tui/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build mncs-cli
+        working-directory: mncs-language
+        run: cargo build --release -p mncs-cli
+
+      - name: Run layout solver tests
+        working-directory: mncs-tui
+        env:
+          MNCS_LIBRARY_PATH: ${{ github.workspace }}/mncs-language/library:${{ github.workspace }}/mncs-tui/src
+        run: |
+          # Test basic layout
+          cargo run --manifest-path ../mncs-language/Cargo.toml -p mncs-cli -- experiment run examples/full-demo.mncs --backend mncs-research-bytecode --corpus .github/workflows/corpus/layout_basic.json 2>&1 | head -50
+
+  test_render:
+    name: Render/damage tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: validate
+    steps:
+      - name: Checkout mncs-tui
+        uses: actions/checkout@v4
+        with:
+          repository: epi13/mncs-tui
+          path: mncs-tui
+
+      - name: Checkout mncs-language
+        uses: actions/checkout@v4
+        with:
+          repository: epi13/mncs-language
+          path: mncs-language
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            mncs-language/target
+            mncs-tui/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build mncs-cli
+        working-directory: mncs-language
+        run: cargo build --release -p mncs-cli
+
+      - name: Run render/damage tests
+        working-directory: mncs-tui
+        env:
+          MNCS_LIBRARY_PATH: ${{ github.workspace }}/mncs-language/library:${{ github.workspace }}/mncs-tui/src
+        run: |
+          cargo run --manifest-path ../mncs-language/Cargo.toml -p mncs-cli -- experiment run examples/full-demo.mncs --backend mncs-research-bytecode --corpus .github/workflows/corpus/render_damage.json 2>&1 | head -50
+
+  rust_checks:
+    name: Rust fmt/clippy
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout mncs-tui
+        uses: actions/checkout@v4
+        with:
+          repository: epi13/mncs-tui
+          path: mncs-tui
+
+      - name: Checkout mncs-language
+        uses: actions/checkout@v4
+        with:
+          repository: epi13/mncs-language
+          path: mncs-language
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Rust fmt check
+        working-directory: mncs-tui
+        run: cargo fmt --check
+
+      - name: Rust fmt check (mncs-language)
+        working-directory: mncs-language
+        run: cargo fmt --check
+
+      - name: Clippy check
+        working-directory: mncs-tui
+        run: cargo clippy -- -D warnings
+
+      - name: Clippy check (mncs-language)
+        working-directory: mncs-language
+        run: cargo clippy --workspace -- -D warnings
