@@ -1,8 +1,257 @@
-mncs 0.5;
+mncs 0.8;
 
-// Raw terminal bytes must be normalized at the adapter boundary.
+// Typed event system: raw terminal bytes become evidence-honest events
+// before application code sees them. Malformed or unsupported sequences
+// remain `Unknown` rather than silently becoming a stronger claim.
+
 module mncs_tui.events;
 
-enum EventKind { KEY, MOUSE, PASTE, RESIZE, FOCUS, LIFECYCLE }
+use mncs.core.geometry.v1;
 
-record Event { kind: EventKind, first: i64, second: i64, modifiers: i64 }
+enum KeyKind { CHAR, ENTER, BACKSPACE, ESC, ARROW_UP, ARROW_DOWN, ARROW_LEFT, ARROW_RIGHT, TAB, UNKNOWN }
+enum Modifier { NONE, SHIFT, CTRL, ALT, CTRL_SHIFT, OTHER }
+enum MouseButton { LEFT, RIGHT, MIDDLE, NONE }
+
+record KeyEvent { kind: KeyKind, codepoint: i64, modifiers: Modifier, valid: bool }
+record MouseEvent { column: i64, row: i64, button: MouseButton, pressed: bool, valid: bool }
+record RawInput { first: i64, second: i64, modifiers: i64 }
+
+enum Event { Key { key: KeyEvent }, Mouse { mouse: MouseEvent }, Resize { size: Size }, Paste { length: i64 }, Focus { gained: bool }, Quit, Unknown { raw: i64 } }
+
+// ---- Key normalization ----
+
+fn modifier_from_bits(bits: i64) -> (result: Modifier) {
+    if bits == 0 {
+        return Modifier.NONE;
+    }
+    if bits == 1 {
+        return Modifier.SHIFT;
+    }
+    if bits == 2 {
+        return Modifier.CTRL;
+    }
+    if bits == 3 {
+        return Modifier.CTRL_SHIFT;
+    }
+    if bits == 4 {
+        return Modifier.ALT;
+    }
+    return Modifier.OTHER;
+}
+
+fn key_kind_from_raw(raw: i64) -> (result: KeyKind) {
+    if raw == 13 {
+        return KeyKind.ENTER;
+    }
+    if raw == 27 {
+        return KeyKind.ESC;
+    }
+    if raw == 8 {
+        return KeyKind.BACKSPACE;
+    }
+    if raw == 9 {
+        return KeyKind.TAB;
+    }
+    if raw == 1000 {
+        return KeyKind.ARROW_UP;
+    }
+    if raw == 1001 {
+        return KeyKind.ARROW_DOWN;
+    }
+    if raw == 1002 {
+        return KeyKind.ARROW_LEFT;
+    }
+    if raw == 1003 {
+        return KeyKind.ARROW_RIGHT;
+    }
+    if raw >= 32 && raw <= 126 {
+        return KeyKind.CHAR;
+    }
+    return KeyKind.UNKNOWN;
+}
+
+fn normalize_key(raw: i64, mods: i64) -> (result: KeyEvent) {
+    let kind: KeyKind = key_kind_from_raw(raw);
+    let modifier: Modifier = modifier_from_bits(mods);
+    let valid: bool = match kind {
+        KeyKind.UNKNOWN => false,
+        KeyKind.CHAR => true,
+        KeyKind.ENTER => true,
+        KeyKind.BACKSPACE => true,
+        KeyKind.ESC => true,
+        KeyKind.ARROW_UP => true,
+        KeyKind.ARROW_DOWN => true,
+        KeyKind.ARROW_LEFT => true,
+        KeyKind.ARROW_RIGHT => true,
+        KeyKind.TAB => true,
+    };
+    let code: i64 = select(valid, raw, 0);
+    return KeyEvent { kind: kind, codepoint: code, modifiers: modifier, valid: valid };
+}
+
+fn key_is_char(event: KeyEvent) -> (result: bool) {
+    return match event.kind {
+        KeyKind.CHAR => true,
+        KeyKind.ENTER => false,
+        KeyKind.BACKSPACE => false,
+        KeyKind.ESC => false,
+        KeyKind.ARROW_UP => false,
+        KeyKind.ARROW_DOWN => false,
+        KeyKind.ARROW_LEFT => false,
+        KeyKind.ARROW_RIGHT => false,
+        KeyKind.TAB => false,
+        KeyKind.UNKNOWN => false,
+    };
+}
+
+fn key_is_enter(event: KeyEvent) -> (result: bool) {
+    return match event.kind {
+        KeyKind.ENTER => true,
+        KeyKind.CHAR => false,
+        KeyKind.BACKSPACE => false,
+        KeyKind.ESC => false,
+        KeyKind.ARROW_UP => false,
+        KeyKind.ARROW_DOWN => false,
+        KeyKind.ARROW_LEFT => false,
+        KeyKind.ARROW_RIGHT => false,
+        KeyKind.TAB => false,
+        KeyKind.UNKNOWN => false,
+    };
+}
+
+fn key_modifiers(event: KeyEvent) -> (result: Modifier) {
+    return event.modifiers;
+}
+
+// ---- Mouse ----
+
+fn mouse_button_from_raw(raw: i64) -> (result: MouseButton) {
+    if raw == 0 {
+        return MouseButton.LEFT;
+    }
+    if raw == 1 {
+        return MouseButton.RIGHT;
+    }
+    if raw == 2 {
+        return MouseButton.MIDDLE;
+    }
+    return MouseButton.NONE;
+}
+
+fn normalize_mouse(column: i64, row: i64, button_raw: i64, pressed_flag: i64) -> (result: MouseEvent) {
+    let button: MouseButton = mouse_button_from_raw(button_raw);
+    let pressed: bool = pressed_flag == 1;
+    let valid: bool = (column >= 0) && (row >= 0) && match button {
+        MouseButton.LEFT => true,
+        MouseButton.RIGHT => true,
+        MouseButton.MIDDLE => true,
+        MouseButton.NONE => false,
+    };
+    return MouseEvent { column: column, row: row, button: button, pressed: pressed, valid: valid };
+}
+
+fn mouse_in_rect(mouse: MouseEvent, bounds: Rect) -> (result: bool) {
+    if mouse.valid {
+        return rect_contains_point(bounds, Point { column: mouse.column, row: mouse.row });
+    }
+    return false;
+}
+
+// ---- Resize ----
+
+fn normalize_resize(columns: i64, rows: i64) -> (result: Event) {
+    if columns <= 0 || rows <= 0 {
+        return Event.Unknown { raw: 0 - 1 };
+    }
+    let size: Size = Size { columns: columns, rows: rows };
+    return Event.Resize { size: size };
+}
+
+// ---- Raw to typed ----
+
+fn normalize_raw(raw: RawInput) -> (result: Event) {
+    // Quit is encoded as raw.first == 3 (Ctrl-C) in this bounded model.
+    if raw.first == 3 {
+        return Event.Quit;
+    }
+    // Paste marker
+    if raw.first == 500 {
+        return Event.Paste { length: raw.second };
+    }
+    // Focus
+    if raw.first == 600 {
+        return Event.Focus { gained: raw.second == 1 };
+    }
+    // Mouse marker 100?
+    if raw.first == 100 {
+        let mouse: MouseEvent = normalize_mouse(raw.second, raw.modifiers, 0, 1);
+        if mouse.valid {
+            return Event.Mouse { mouse: mouse };
+        }
+        return Event.Unknown { raw: raw.first };
+    }
+    let key: KeyEvent = normalize_key(raw.first, raw.modifiers);
+    if key.valid {
+        return Event.Key { key: key };
+    }
+    return Event.Unknown { raw: raw.first };
+}
+
+fn event_is_quit(event: Event) -> (result: bool) {
+    return match event {
+        Event.Quit => true,
+        Event.Key { key } => false,
+        Event.Mouse { mouse } => false,
+        Event.Resize { size } => false,
+        Event.Paste { length } => false,
+        Event.Focus { gained } => false,
+        Event.Unknown { raw } => false,
+    };
+}
+
+fn event_is_unknown(event: Event) -> (result: bool) {
+    return match event {
+        Event.Unknown { raw } => true,
+        Event.Key { key } => false,
+        Event.Mouse { mouse } => false,
+        Event.Resize { size } => false,
+        Event.Paste { length } => false,
+        Event.Focus { gained } => false,
+        Event.Quit => false,
+    };
+}
+
+fn event_is_resize(event: Event) -> (result: bool) {
+    return match event {
+        Event.Resize { size } => true,
+        Event.Key { key } => false,
+        Event.Mouse { mouse } => false,
+        Event.Paste { length } => false,
+        Event.Focus { gained } => false,
+        Event.Quit => false,
+        Event.Unknown { raw } => false,
+    };
+}
+
+fn event_is_key(event: Event) -> (result: bool) {
+    return match event {
+        Event.Key { key } => true,
+        Event.Mouse { mouse } => false,
+        Event.Resize { size } => false,
+        Event.Paste { length } => false,
+        Event.Focus { gained } => false,
+        Event.Quit => false,
+        Event.Unknown { raw } => false,
+    };
+}
+
+// Evidence-honest: malformed never becomes Quit.
+
+fn raw_is_quit_marker(raw: i64) -> (result: bool) {
+    return raw == 3;
+}
+
+fn unknown_preserved(raw: RawInput) -> (result: bool) {
+    let event: Event = normalize_raw(raw);
+    return event_is_unknown(event);
+}

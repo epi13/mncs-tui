@@ -2,7 +2,7 @@
 
 Machine-native terminal UI framework for MNCS, built around first-class geometry, constraint-based layout, structured rendering, and efficient terminal interaction.
 
-> **Status: experimental bootstrap.** `mncs-tui` is a design and language-pressure project. The initial source modules are MNCS-family fixtures and are expected to evolve with the language. This repository does not claim a stable widget API, a final terminal backend, or production suitability.
+> **Status: experimental vertical slice.** `mncs-tui` now has a functioning MNCS-native pipeline (typed geometry via `mncs.core.geometry.v1`, bounded constraint solving, structured cells/frames, branchless damage with `vec`/`mask`, typed events, composable widgets, focus/hit-testing, and a minimal terminal backend). The integrated demo `examples/full-demo.mncs` exercises nested layout (`header/body/nav/main/status`), intrinsic/fixed/grow, clipping, rendering, frame diff, focus, keyboard, resize, and terminal projection. APIs remain experimental and not yet stable.
 
 ## Why this project exists
 
@@ -40,20 +40,23 @@ The important fact is the resolved geometry. A widget has a rectangle, a parent,
 
 ```text
 src/
-  geometry.mncs     points, sizes, rectangles, and spatial identity
-  layout.mncs       axes, sizing constraints, and placements
-  render.mncs       structured cells, frames, and damage concepts
-  events.mncs       terminal input and lifecycle event vocabulary
-  widgets.mncs      widget identity, kinds, and composition seams
+  geometry.mncs     hit-regions, viewports, anchors, and clipping over mncs.core.geometry.v1
+  layout.mncs       bounded constraint solver (fixed/intrinsic/grow, min/max, remainder)
+  render.mncs       cells, frames, branchless damage via vec/mask/select
+  events.mncs       typed Key/Mouse/Resize/Paste/Focus/Quit with Unknown preservation
+  widgets.mncs      container/text/list/table/status with intrinsic sizing and focus
+  focus.mncs        focus identity, traversal, hit-testing, and event dispatch
+  terminal.mncs     lifecycle, alt-screen, cursor, style, and damage→commands
 examples/
-  first-layout.mncs small MNCS source fixture that constructs a rectangle
+  first-layout.mncs small rectangle fixture (bootstrap)
+  full-demo.mncs    integrated demo exercising layout→render→diff→focus→terminal
 docs/
   architecture.md   semantic pipeline and ownership boundaries
   roadmap.md        staged implementation plan and explicit non-goals
   contributing.md   development workflow and upstream feedback rules
 ```
 
-The `.mncs` files under `src/` are intentionally small. They establish the vocabulary and pressure points before the language has a finalized package/module system for a reusable UI library.
+`src/` modules are now substantial MNCS implementations (Profile 0.8, bounded data, `select`/`vec`/`mask`). The upstream `mncs.core.geometry.v1` (in `mncs-language/library/core/geometry.mncs`) is the canonical primitive store; `mncs_tui.geometry` extends it with hit-regions and viewports rather than duplicating it.
 
 ## The target model
 

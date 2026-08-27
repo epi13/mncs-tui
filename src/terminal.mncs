@@ -1,0 +1,127 @@
+mncs 0.8;
+
+// Minimal terminal backend: bounded, explicit, deterministic resource handling.
+// No stringly-typed escape sequences are produced in application code; the
+// adapter owns encoding, capability probing, and cleanup guarantees.
+
+module mncs_tui.terminal;
+
+use mncs.core.geometry.v1;
+use mncs_tui.render;
+use mncs_tui.geometry;
+
+enum TerminalOp { CLEAR, CURSOR_MOVE, CURSOR_HIDE, CURSOR_SHOW, ENTER_ALT, EXIT_ALT, WRITE_CELL, STYLE_SET }
+
+record TerminalCommand { op: TerminalOp, column: i64, row: i64, glyph: i64, style: i64 }
+record TerminalState { width: i64, height: i64, alt: bool, cursor_visible: bool, initialized: bool, generation: i64 }
+record TerminalCaps { alt_supported: bool, style_supported: bool, width: i64, height: i64 }
+
+// ---- Lifecycle: acquire and release are pure state transitions so pairing
+// is visible to the verifier.
+
+fn terminal_init(width: i64, height: i64) -> (result: TerminalState) {
+    if width <= 0 || height <= 0 {
+        return TerminalState { width: 80, height: 24, alt: false, cursor_visible: true, initialized: true, generation: 1 };
+    }
+    return TerminalState { width: width, height: height, alt: false, cursor_visible: true, initialized: true, generation: 1 };
+}
+
+fn terminal_enter_alt(state: TerminalState) -> (result: TerminalState) {
+    if state.initialized {
+        return TerminalState { width: state.width, height: state.height, alt: true, cursor_visible: state.cursor_visible, initialized: state.initialized, generation: state.generation +% 1 };
+    }
+    return state;
+}
+
+fn terminal_exit_alt(state: TerminalState) -> (result: TerminalState) {
+    if state.alt {
+        return TerminalState { width: state.width, height: state.height, alt: false, cursor_visible: state.cursor_visible, initialized: state.initialized, generation: state.generation +% 1 };
+    }
+    return state;
+}
+
+fn terminal_set_cursor_visible(state: TerminalState, visible: bool) -> (result: TerminalState) {
+    return TerminalState { width: state.width, height: state.height, alt: state.alt, cursor_visible: visible, initialized: state.initialized, generation: state.generation +% 1 };
+}
+
+fn terminal_resize(state: TerminalState, new_width: i64, new_height: i64) -> (result: TerminalState) {
+    if new_width <= 0 || new_height <= 0 {
+        return state;
+    }
+    return TerminalState { width: new_width, height: new_height, alt: state.alt, cursor_visible: state.cursor_visible, initialized: state.initialized, generation: state.generation +% 1 };
+}
+
+fn terminal_cleanup(state: TerminalState) -> (result: TerminalState) {
+    if state.initialized {
+        return TerminalState { width: state.width, height: state.height, alt: false, cursor_visible: true, initialized: false, generation: state.generation +% 1 };
+    }
+    return state;
+}
+
+fn terminal_is_initialized(state: TerminalState) -> (result: bool) {
+    return state.initialized;
+}
+
+fn terminal_needs_full_redraw(old_state: TerminalState, new_state: TerminalState) -> (result: bool) {
+    return (old_state.width != new_state.width) || (old_state.height != new_state.height) || (old_state.generation != new_state.generation);
+}
+
+// ---- Capability probing is evidence, not ambient facts.
+
+fn caps_make(width: i64, height: i64, alt: bool, style: bool) -> (result: TerminalCaps) {
+    return TerminalCaps { alt_supported: alt, style_supported: style, width: width, height: height };
+}
+
+fn caps_supports_alt(caps: TerminalCaps) -> (result: bool) {
+    return caps.alt_supported;
+}
+
+// ---- Command generation: damage to terminal operations.
+
+fn command_clear() -> (result: TerminalCommand) {
+    return TerminalCommand { op: TerminalOp.CLEAR, column: 0, row: 0, glyph: 0, style: 0 };
+}
+
+fn command_move(column: i64, row: i64) -> (result: TerminalCommand) {
+    return TerminalCommand { op: TerminalOp.CURSOR_MOVE, column: column, row: row, glyph: 0, style: 0 };
+}
+
+fn command_write(cell: Cell) -> (result: TerminalCommand) {
+    return TerminalCommand { op: TerminalOp.WRITE_CELL, column: cell.column, row: cell.row, glyph: cell.glyph, style: cell.style };
+}
+
+fn command_style(style: i64) -> (result: TerminalCommand) {
+    return TerminalCommand { op: TerminalOp.STYLE_SET, column: 0, row: 0, glyph: 0, style: style };
+}
+
+fn damage_to_commands(damage: Damage, frame: Frame) -> (result: FrameCommands) {
+    // For the bounded 4-cell frame, emit at most one write per changed cell
+    // plus a cursor move. This is the narrow, explicit projection.
+    let move_cmd: TerminalCommand = command_move(damage.x, damage.y);
+    let write0: TerminalCommand = command_write(frame.first);
+    let write1: TerminalCommand = command_write(frame.second);
+    let write2: TerminalCommand = command_write(frame.third);
+    return FrameCommands { move_cmd: move_cmd, first: write0, second: write1, third: write2, count: damage.changed_cells };
+}
+
+record FrameCommands { move_cmd: TerminalCommand, first: TerminalCommand, second: TerminalCommand, third: TerminalCommand, count: i64 }
+
+fn frame_to_commands(frame: Frame) -> (result: FrameCommands) {
+    let move_cmd: TerminalCommand = command_move(0, 0);
+    let w0: TerminalCommand = command_write(frame.first);
+    let w1: TerminalCommand = command_write(frame.second);
+    let w2: TerminalCommand = command_write(frame.third);
+    return FrameCommands { move_cmd: move_cmd, first: w0, second: w1, third: w2, count: 4 };
+}
+
+fn commands_count(cmds: FrameCommands) -> (result: i64) {
+    return cmds.count;
+}
+
+fn terminal_width(state: TerminalState) -> (result: i64) {
+    return state.width;
+}
+
+fn terminal_height(state: TerminalState) -> (result: i64) {
+    return state.height;
+}

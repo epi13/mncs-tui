@@ -1,0 +1,156 @@
+mncs 0.8;
+
+// Focus, hit-testing, and event dispatch: the interaction substrate.
+// Applications should not reconstruct geometry to know which widget was
+// interacted with; dispatch follows hit-testing and focus relationships.
+
+module mncs_tui.focus;
+
+use mncs.core.geometry.v1;
+use mncs_tui.geometry;
+use mncs_tui.widgets;
+use mncs_tui.events;
+
+record FocusState { current: WidgetId, count: i64, valid: bool }
+record HitTestResult { hit_id: WidgetId, hit: bool }
+record DispatchResult { consumed: bool, new_focus: WidgetId, damage: bool }
+
+// Focus traversal: next/prev in bounded order.
+
+fn focus_init(first: WidgetId) -> (result: FocusState) {
+    return FocusState { current: first, count: 1, valid: true };
+}
+
+fn focus_is_valid(state: FocusState) -> (result: bool) {
+    return state.valid && state.current.value >= 0;
+}
+
+fn focus_move_next(state: FocusState, first: Widget, second: Widget, third: Widget) -> (result: FocusState) {
+    if state.valid {
+        let nxt: WidgetId = next_focusable(state.current, first, second, third);
+        if nxt.value < 0 {
+            return state;
+        }
+        return FocusState { current: nxt, count: state.count +% 1, valid: true };
+    }
+    return state;
+}
+
+fn focus_move_prev(state: FocusState, first: Widget, second: Widget, third: Widget) -> (result: FocusState) {
+    let nxt: WidgetId = next_focusable(state.current, third, second, first);
+    if nxt.value < 0 {
+        return state;
+    }
+    return FocusState { current: nxt, count: state.count +% 1, valid: true };
+}
+
+fn focus_contains(state: FocusState, widget: Widget) -> (result: bool) {
+    return widget_id_equal(state.current, widget.id);
+}
+
+// Hit testing via geometry: mouse dispatch follows resolved rectangles.
+
+fn hit_test_mouse(mouse: MouseEvent, first: Widget, second: Widget, third: Widget) -> (result: HitTestResult) {
+    if mouse.valid {
+        let point: Point = Point { column: mouse.column, row: mouse.row };
+        if widget_contains_point(first, point) {
+            return HitTestResult { hit_id: first.id, hit: true };
+        }
+        if widget_contains_point(second, point) {
+            return HitTestResult { hit_id: second.id, hit: true };
+        }
+        if widget_contains_point(third, point) {
+            return HitTestResult { hit_id: third.id, hit: true };
+        }
+        return HitTestResult { hit_id: WidgetId { value: 0 - 1 }, hit: false };
+    }
+    return HitTestResult { hit_id: WidgetId { value: 0 - 1 }, hit: false };
+}
+
+fn hit_test_point(point: Point, first: Widget, second: Widget, third: Widget) -> (result: HitTestResult) {
+    if widget_contains_point(first, point) {
+        return HitTestResult { hit_id: first.id, hit: true };
+    }
+    if widget_contains_point(second, point) {
+        return HitTestResult { hit_id: second.id, hit: true };
+    }
+    if widget_contains_point(third, point) {
+        return HitTestResult { hit_id: third.id, hit: true };
+    }
+    return HitTestResult { hit_id: WidgetId { value: 0 - 1 }, hit: false };
+}
+
+// Keyboard dispatch: if focus is valid and key is handled, consume.
+
+fn dispatch_key(key: KeyEvent, focus: FocusState, first: Widget, second: Widget, third: Widget) -> (result: DispatchResult) {
+    if key.valid {
+        let is_tab: bool = match key.kind {
+            TAB => true,
+            CHAR => false,
+            ENTER => false,
+            BACKSPACE => false,
+            ESC => false,
+            ARROW_UP => false,
+            ARROW_DOWN => false,
+            ARROW_LEFT => false,
+            ARROW_RIGHT => false,
+            UNKNOWN => false,
+        };
+        if is_tab {
+            let nxt: FocusState = focus_move_next(focus, first, second, third);
+            return DispatchResult { consumed: true, new_focus: nxt.current, damage: true };
+        }
+        let is_enter: bool = match key.kind {
+            ENTER => true,
+            CHAR => false,
+            BACKSPACE => false,
+            ESC => false,
+            ARROW_UP => false,
+            ARROW_DOWN => false,
+            ARROW_LEFT => false,
+            ARROW_RIGHT => false,
+            TAB => false,
+            UNKNOWN => false,
+        };
+        if is_enter && focus.valid {
+            return DispatchResult { consumed: true, new_focus: focus.current, damage: true };
+        }
+        return DispatchResult { consumed: false, new_focus: focus.current, damage: false };
+    }
+    return DispatchResult { consumed: false, new_focus: focus.current, damage: false };
+}
+
+fn dispatch_mouse(mouse: MouseEvent, focus: FocusState, first: Widget, second: Widget, third: Widget) -> (result: DispatchResult) {
+    let hit: HitTestResult = hit_test_mouse(mouse, first, second, third);
+    if hit.hit {
+        let target: Widget = select(hit.hit_id.value == first.id.value, first, select(hit.hit_id.value == second.id.value, second, third));
+        if widget_is_focusable(target) {
+            return DispatchResult { consumed: true, new_focus: hit.hit_id, damage: true };
+        }
+        return DispatchResult { consumed: true, new_focus: focus.current, damage: false };
+    }
+    return DispatchResult { consumed: false, new_focus: focus.current, damage: false };
+}
+
+fn dispatch_resize(new_size: Size, old_size: Size) -> (result: bool) {
+    return (new_size.columns != old_size.columns) || (new_size.rows != old_size.rows);
+}
+
+fn dispatch_event(event: Event, focus: FocusState, first: Widget, second: Widget, third: Widget) -> (result: DispatchResult) {
+    return match event {
+        Key { key } => dispatch_key(key, focus, first, second, third),
+        Mouse { mouse } => dispatch_mouse(mouse, focus, first, second, third),
+        Resize { size } => DispatchResult { consumed: true, new_focus: focus.current, damage: true },
+        Paste { length } => DispatchResult { consumed: false, new_focus: focus.current, damage: false },
+        Focus { gained } => DispatchResult { consumed: false, new_focus: focus.current, damage: gained },
+        Quit => DispatchResult { consumed: true, new_focus: focus.current, damage: false },
+        Unknown { raw } => DispatchResult { consumed: false, new_focus: focus.current, damage: false },
+    };
+}
+
+// Resize invalidates layout when terminal size changes; this is a pure
+// predicate so callers can decide when to re-solve.
+
+fn needs_relayout(old_size: Size, new_size: Size) -> (result: bool) {
+    return dispatch_resize(new_size, old_size);
+}

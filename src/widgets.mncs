@@ -1,9 +1,222 @@
-mncs 0.5;
+mncs 0.8;
 
-// Widget identity and composition are kept separate from terminal encoding.
+// Widget system: composable, identity-preserving, and measured before rendered.
+// A smaller number of widgets with real composition beats many superficial ones.
+
 module mncs_tui.widgets;
+
+use mncs.core.geometry.v1;
+use mncs_tui.geometry;
+use mncs_tui.layout;
+use mncs_tui.render;
+use mncs_tui.events;
 
 enum WidgetKind { CONTAINER, TEXT, LIST, TABLE, PANE, OVERLAY, FORM, STATUS }
 
 record WidgetId { value: i64 }
-record Widget { id: WidgetId, kind: WidgetKind, parent: WidgetId }
+record Widget { id: WidgetId, kind: WidgetKind, parent: WidgetId, rect: Rect, focusable: bool, visible: bool }
+
+record WidgetTree { root: Widget, first: Widget, second: Widget, third: Widget }
+record ListState { selected: i64, count: i64, focused: bool }
+record TableState { selected_row: i64, rows: i64, cols: i64 }
+
+// ---- Identity ----
+
+fn widget_id_equal(left: WidgetId, right: WidgetId) -> (result: bool) {
+    return left.value == right.value;
+}
+
+fn kind_equal(left: WidgetKind, right: WidgetKind) -> (result: bool) {
+    return match left {
+        CONTAINER => match right { CONTAINER => true, TEXT => false, LIST => false, TABLE => false, PANE => false, OVERLAY => false, FORM => false, STATUS => false },
+        TEXT => match right { TEXT => true, CONTAINER => false, LIST => false, TABLE => false, PANE => false, OVERLAY => false, FORM => false, STATUS => false },
+        LIST => match right { LIST => true, CONTAINER => false, TEXT => false, TABLE => false, PANE => false, OVERLAY => false, FORM => false, STATUS => false },
+        TABLE => match right { TABLE => true, CONTAINER => false, TEXT => false, LIST => false, PANE => false, OVERLAY => false, FORM => false, STATUS => false },
+        PANE => match right { PANE => true, CONTAINER => false, TEXT => false, LIST => false, TABLE => false, OVERLAY => false, FORM => false, STATUS => false },
+        OVERLAY => match right { OVERLAY => true, CONTAINER => false, TEXT => false, LIST => false, TABLE => false, PANE => false, FORM => false, STATUS => false },
+        FORM => match right { FORM => true, CONTAINER => false, TEXT => false, LIST => false, TABLE => false, PANE => false, OVERLAY => false, STATUS => false },
+        STATUS => match right { STATUS => true, CONTAINER => false, TEXT => false, LIST => false, TABLE => false, PANE => false, OVERLAY => false, FORM => false },
+    };
+}
+
+fn widget_equal(left: Widget, right: Widget) -> (result: bool) {
+    let id_eq: bool = widget_id_equal(left.id, right.id);
+    let kind_eq: bool = kind_equal(left.kind, right.kind);
+    return id_eq && kind_eq;
+}
+
+fn widget_is_container(widget: Widget) -> (result: bool) {
+    return match widget.kind {
+        CONTAINER => true,
+        PANE => true,
+        OVERLAY => true,
+        TEXT => false,
+        LIST => false,
+        TABLE => false,
+        FORM => false,
+        STATUS => false,
+    };
+}
+
+fn widget_is_focusable(widget: Widget) -> (result: bool) {
+    return widget.focusable && widget.visible;
+}
+
+// ---- Intrinsic sizing ----
+
+fn intrinsic_size(kind: WidgetKind, content_len: i64) -> (result: Size) {
+    return match kind {
+        TEXT => Size { columns: content_len, rows: 1 },
+        LIST => Size { columns: 20, rows: content_len },
+        TABLE => Size { columns: 30, rows: content_len },
+        STATUS => Size { columns: content_len, rows: 1 },
+        CONTAINER => Size { columns: 0, rows: 0 },
+        PANE => Size { columns: 0, rows: 0 },
+        OVERLAY => Size { columns: 0, rows: 0 },
+        FORM => Size { columns: 20, rows: 3 },
+    };
+}
+
+fn widget_intrinsic(widget: Widget, content_len: i64) -> (result: Size) {
+    return intrinsic_size(widget.kind, content_len);
+}
+
+// ---- Geometry participation ----
+
+fn widget_contains_point(widget: Widget, point: Point) -> (result: bool) {
+    if widget.visible {
+        return rect_contains_point(widget.rect, point);
+    }
+    return false;
+}
+
+fn widget_intersects(widget: Widget, area: Rect) -> (result: bool) {
+    if widget.visible {
+        return rect_intersects(widget.rect, area);
+    }
+    return false;
+}
+
+fn widget_clipped_rect(widget: Widget, parent_clip: Rect) -> (result: Rect) {
+    return rect_clip(widget.rect, parent_clip);
+}
+
+fn widget_hit_region(widget: Widget, parent_clip: Rect) -> (result: HitRegion) {
+    return hit_region_make(widget.id.value, widget.rect, parent_clip);
+}
+
+// ---- Tree helpers (bounded 4-ary) ----
+
+fn tree_root(tree: WidgetTree) -> (result: Widget) {
+    return tree.root;
+}
+
+fn tree_child(tree: WidgetTree, idx: i64) -> (result: Widget) {
+    let pick1: Widget = select(idx == 1, tree.second, tree.first);
+    let pick2: Widget = select(idx == 2, tree.third, pick1);
+    return select(idx == 3, tree.root, pick2);
+}
+
+fn tree_contains(tree: WidgetTree, point: Point) -> (result: i64) {
+    if widget_contains_point(tree.root, point) {
+        return tree.root.id.value;
+    }
+    if widget_contains_point(tree.first, point) {
+        return tree.first.id.value;
+    }
+    if widget_contains_point(tree.second, point) {
+        return tree.second.id.value;
+    }
+    if widget_contains_point(tree.third, point) {
+        return tree.third.id.value;
+    }
+    return 0 - 1;
+}
+
+// ---- List / Table ----
+
+fn list_selected(state: ListState) -> (result: i64) {
+    return state.selected;
+}
+
+fn list_move_down(state: ListState) -> (result: ListState) {
+    let nxt: i64 = state.selected +% 1;
+    let clamped: i64 = select(nxt >= state.count, state.count -% 1, nxt);
+    let safe: i64 = select(clamped < 0, 0, clamped);
+    return ListState { selected: safe, count: state.count, focused: state.focused };
+}
+
+fn list_move_up(state: ListState) -> (result: ListState) {
+    let prev: i64 = state.selected -% 1;
+    let clamped: i64 = select(prev < 0, 0, prev);
+    return ListState { selected: clamped, count: state.count, focused: state.focused };
+}
+
+fn list_is_selected(state: ListState, index: i64) -> (result: bool) {
+    return state.selected == index;
+}
+
+fn table_selected(state: TableState) -> (result: i64) {
+    return state.selected_row;
+}
+
+fn table_move_down(state: TableState) -> (result: TableState) {
+    let nxt: i64 = state.selected_row +% 1;
+    let clamped: i64 = select(nxt >= state.rows, state.rows -% 1, nxt);
+    return TableState { selected_row: select(clamped < 0, 0, clamped), rows: state.rows, cols: state.cols };
+}
+
+// ---- Rendering: widget to frame cells ----
+
+fn widget_frame(widget: Widget, glyph: i64) -> (result: Frame) {
+    let cell: Cell = Cell { column: widget.rect.origin.column, row: widget.rect.origin.row, glyph: glyph, style: select(widget.focusable, 1, 0) };
+    let empty: Cell = Cell { column: 0, row: 0, glyph: 0, style: 0 };
+    return Frame { width: widget.rect.size.columns, height: widget.rect.size.rows, first: cell, second: empty, third: empty, fourth: empty };
+}
+
+fn status_bar_frame(status: Widget, text_glyph: i64) -> (result: Frame) {
+    let base: Cell = Cell { column: status.rect.origin.column, row: status.rect.origin.row, glyph: text_glyph, style: 2 };
+    let empty: Cell = Cell { column: 0, row: 0, glyph: 0, style: 0 };
+    return Frame { width: status.rect.size.columns, height: status.rect.size.rows, first: base, second: empty, third: empty, fourth: empty };
+}
+
+fn list_frame(item: Widget, selected: bool) -> (result: Frame) {
+    let style: i64 = select(selected, 3, 0);
+    let cell: Cell = Cell { column: item.rect.origin.column, row: item.rect.origin.row, glyph: 65, style: style };
+    let empty: Cell = Cell { column: 0, row: 0, glyph: 0, style: 0 };
+    return Frame { width: item.rect.size.columns, height: item.rect.size.rows, first: cell, second: empty, third: empty, fourth: empty };
+}
+
+// ---- Focus helpers ----
+
+fn next_focusable(current: WidgetId, first: Widget, second: Widget, third: Widget) -> (result: WidgetId) {
+    let widgets: [Widget; 3] = [first, second, third];
+    iterate i over widgets carrying cur_pos: i64 = 0 - 1 {
+        let widget: Widget = widgets[i];
+        let is_current: bool = widget_id_equal(widget.id, current);
+        next cur_pos = select(is_current, i as i64, cur_pos);
+    }
+    if cur_pos < 0 {
+        iterate j over widgets carrying wrap: WidgetId = WidgetId { value: 0 - 1 } {
+            let widget: Widget = widgets[j];
+            let cand: bool = widget_is_focusable(widget) && wrap.value < 0;
+            next wrap = select(cand, widget.id, wrap);
+        }
+        return wrap;
+    }
+    iterate k over widgets carrying result: WidgetId = WidgetId { value: 0 - 1 } {
+        let widget: Widget = widgets[k];
+        let after: bool = (k as i64) > cur_pos;
+        let cand: bool = after && widget_is_focusable(widget) && result.value < 0;
+        next result = select(cand, widget.id, result);
+    }
+    if result.value < 0 {
+        iterate m over widgets carrying wrap2: WidgetId = WidgetId { value: 0 - 1 } {
+            let widget: Widget = widgets[m];
+            let cand: bool = widget_is_focusable(widget) && wrap2.value < 0;
+            next wrap2 = select(cand, widget.id, wrap2);
+        }
+        return wrap2;
+    }
+    return result;
+}
