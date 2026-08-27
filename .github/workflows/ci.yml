@@ -63,7 +63,7 @@ jobs:
             examples/backend-repro.mncs; do
             "$MNCS_CLI" validate "$source"
           done
-          if rg -n 'return true|= true;[[:space:]]*//|avoid hang|skip.*hang' examples/full-demo.mncs; then
+          if grep -En 'return true|= true;[[:space:]]*//|avoid hang|skip.*hang' examples/full-demo.mncs; then
             echo "full-demo contains an unconditional or hang-masking assertion" >&2
             exit 1
           fi
@@ -138,7 +138,7 @@ jobs:
           set -euo pipefail
           jq -e '.cases | length == 2 and all(.[]; .expected_status == "returned" and .expected != null)' \
             "$GITHUB_WORKSPACE/mncs-language/examples/execution/partition-corpus.json"
-          rg -n 'module mncs\.core\.partition\.v1|use mncs\.core\.partition\.v1' \
+          grep -En 'module mncs\.core\.partition\.v1|use mncs\.core\.partition\.v1' \
             "$GITHUB_WORKSPACE/mncs-language/library/core/partition.mncs" \
             src/layout.mncs
 
