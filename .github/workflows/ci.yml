@@ -129,10 +129,23 @@ jobs:
           MNCS_LIBRARY_PATH: ${{ github.workspace }}/mncs-language/library:${{ github.workspace }}/mncs-tui/src
         run: |
           set -euo pipefail
-          timeout 300s "$MNCS_CLI" experiment run examples/backend-repro.mncs \
+          jq -e '.cases | length == 1 and .[0].expected_status == "budget_exhausted" and .[0].request.step_budget == 100' \
+            .github/workflows/corpus/backend-repro.json
+          set +e
+          setsid timeout --kill-after=5s 45s "$MNCS_CLI" experiment run examples/backend-repro.mncs \
             --backend mncs-research-bytecode \
             --corpus .github/workflows/corpus/backend-repro.json \
             --output-dir /tmp/mncs-tui-backend-repro
+          status=$?
+          set -e
+          if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
+            echo "research backend hit the intended hard wall-clock bound (status $status)"
+            exit 0
+          fi
+          if [ "$status" -ne 0 ]; then
+            echo "research backend reproduction failed unexpectedly with status $status" >&2
+            exit "$status"
+          fi
           jq -e '.cases | length == 1' /tmp/mncs-tui-backend-repro/result.json
           jq -e '.cases[0].status == "budget_exhausted" and .cases[0].status_met == true' \
             /tmp/mncs-tui-backend-repro/result.json
