@@ -2,7 +2,7 @@
 
 Machine-native terminal UI framework for MNCS, built around first-class geometry, constraint-based layout, structured rendering, and efficient terminal interaction.
 
-> **Status: experimental vertical slice.** `mncs-tui` now has a functioning MNCS-native pipeline (typed geometry via `mncs.core.geometry.v1`, bounded constraint solving, structured cells/frames, branchless damage with `vec`/`mask`, typed events, composable widgets, focus/hit-testing, and a minimal terminal backend). The integrated demo `examples/full-demo.mncs` exercises nested layout (`header/body/nav/main/status`), intrinsic/fixed/grow, clipping, rendering, frame diff, focus, keyboard, resize, and terminal projection. APIs remain experimental and not yet stable.
+> **Status: experimental semantic vertical slice.** `mncs-tui` has validated MNCS source for typed geometry, bounded constraint solving, structured cells/frames, damage projection, generic events, composable widgets, focus, hit-testing, and terminal command planning. The integrated demo `examples/full-demo.mncs` exercises those relationships, but this repository does not yet provide host terminal I/O or claim a production-ready runtime. APIs remain experimental and not yet stable.
 
 ## Why this project exists
 
@@ -50,13 +50,15 @@ src/
 examples/
   first-layout.mncs small rectangle fixture (bootstrap)
   full-demo.mncs    integrated demo exercising layout→render→diff→focus→terminal
+  focused-tests.mncs bounded semantic regressions for layout, render, tree, and events
+  backend-repro.mncs minimized research-backend regression fixture
 docs/
   architecture.md   semantic pipeline and ownership boundaries
   roadmap.md        staged implementation plan and explicit non-goals
   contributing.md   development workflow and upstream feedback rules
 ```
 
-`src/` modules are now substantial MNCS implementations (Profile 0.8, bounded data, `select`/`vec`/`mask`). The upstream `mncs.core.geometry.v1` (in `mncs-language/library/core/geometry.mncs`) is the canonical primitive store; `mncs_tui.geometry` extends it with hit-regions and viewports rather than duplicating it.
+`src/` modules are now substantial MNCS implementations (Profile 0.8, bounded data, `select`/`vec`/`mask`). The upstream `mncs.core.geometry.v1` (in `mncs-language/library/core/geometry.mncs`) is the canonical primitive store; `mncs.core.partition.v1` owns weighted integer allocation; and `mncs.std.ansi.v1` owns ANSI/VT sequence meaning. `mncs_tui.geometry`, `mncs_tui.layout`, and `mncs_tui.events` adapt those authorities with TUI-specific contracts rather than duplicating them.
 
 ## The target model
 
@@ -118,7 +120,15 @@ git clone https://github.com/epi13/mncs-tui.git
 cd mncs-tui
 ```
 
-For local source experiments, use a sibling checkout of [`mncs-language`](https://github.com/epi13/mncs-language) and run its normal validation commands against the fixtures. The exact command is intentionally not frozen here while the language CLI and package model are changing.
+For local source experiments, use a sibling checkout of [`mncs-language`](https://github.com/epi13/mncs-language), build its CLI, and set `MNCS_LIBRARY_PATH` to the language `library` followed by this repository's `src` directory:
+
+```bash
+cargo build --release -p mncs-cli --manifest-path ../mncs-language/Cargo.toml
+MNCS_LIBRARY_PATH="$PWD/../mncs-language/library:$PWD/src" \
+  ../mncs-language/target/release/mncs validate examples/full-demo.mncs
+```
+
+The focused source fixtures and the CI workflow use one source path per validation invocation. The research-bytecode backend is currently bounded by an explicit minimized regression fixture; the semantic body request remains the executable evidence for the layout result.
 
 Before proposing a change, read [the architecture](docs/architecture.md) and [contributing guide](docs/contributing.md). Every new capability should state whether it is an application concern, a framework concern, a language concern, or a service concern.
 

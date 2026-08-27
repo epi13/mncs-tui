@@ -1,11 +1,6 @@
 mncs 0.8;
 
-// Structured rendering: semantic cells, frames, and branchless damage.
-//
-// Widgets produce typed Cells; frames retain coordinates, glyph identity,
-// style, and clipping. The diff stage uses the Profile 0.8 vector/mask
-// substrate and `select` to avoid data-dependent branches over cell arrays.
-
+// Structured rendering: semantic cells, frames, and honest damage.
 module mncs_tui.render;
 
 use mncs.core.geometry.v1;
@@ -13,15 +8,21 @@ use mncs_tui.geometry;
 
 record Cell { column: i64, row: i64, glyph: i64, style: i64 }
 record Frame { width: i64, height: i64, first: Cell, second: Cell, third: Cell, fourth: Cell }
-record Damage { x: i64, y: i64, w: i64, h: i64, changed_cells: i64, any_changed: bool }
+record Damage { x: i64, y: i64, w: i64, h: i64, changed_cells: i64, any_changed: bool, full_redraw: bool }
 record Span { start_column: i64, length: i64, glyph: i64, style: i64 }
 
-// ---- Cell ----
+fn cell_is_empty(cell: Cell) -> (result: bool) {
+    return cell.glyph == 0 && cell.style == 0;
+}
 
 fn cell_equal(left: Cell, right: Cell) -> (result: bool) {
-    let pos: bool = (left.column == right.column) && (left.row == right.row);
-    let content: bool = (left.glyph == right.glyph) && (left.style == right.style);
-    return pos && content;
+    if cell_is_empty(left) && cell_is_empty(right) {
+        return true;
+    }
+    if cell_is_empty(left) || cell_is_empty(right) {
+        return false;
+    }
+    return left.column == right.column && left.row == right.row && left.glyph == right.glyph && left.style == right.style;
 }
 
 fn cell_glyph_equal(left: Cell, right: Cell) -> (result: bool) {
@@ -37,14 +38,15 @@ fn make_cell(column: i64, row: i64, glyph: i64, style: i64) -> (result: Cell) {
 }
 
 fn cell_rect(cell: Cell) -> (result: Rect) {
+    if cell_is_empty(cell) {
+        return Rect { origin: Point { column: 0, row: 0 }, size: Size { columns: 0, rows: 0 } };
+    }
     return Rect { origin: Point { column: cell.column, row: cell.row }, size: Size { columns: 1, rows: 1 } };
 }
 
 fn cell_visible(cell: Cell, viewport: Rect) -> (result: bool) {
     return rect_contains_point(viewport, Point { column: cell.column, row: cell.row });
 }
-
-// ---- Frame access via branchless selection ----
 
 fn frame_get(frame: Frame, idx: i64) -> (result: Cell) {
     let pick1: Cell = select(idx == 1, frame.second, frame.first);
@@ -65,18 +67,8 @@ fn make_frame(width: i64, height: i64, pa: Cell, pb: Cell, pc: Cell, pd: Cell) -
 }
 
 fn frame_equal(left: Frame, right: Frame) -> (result: bool) {
-    let dim: bool = (left.width == right.width) && (left.height == right.height);
-    if dim {
-        let ca: bool = cell_equal(left.first, right.first);
-        let cb: bool = cell_equal(left.second, right.second);
-        let cc: bool = cell_equal(left.third, right.third);
-        let cd: bool = cell_equal(left.fourth, right.fourth);
-        return ca && cb && cc && cd;
-    }
-    return false;
+    return left.width == right.width && left.height == right.height && cell_equal(left.first, right.first) && cell_equal(left.second, right.second) && cell_equal(left.third, right.third) && cell_equal(left.fourth, right.fourth);
 }
-
-// Vector-accelerated glyph comparison: pack four glyphs into semantic vectors.
 
 fn glyph_mask_changed(old_frame: Frame, new_frame: Frame) -> (result: mask<4>) {
     let old_glyphs: vec<i64, 4> = vector(old_frame.first.glyph, old_frame.second.glyph, old_frame.third.glyph, old_frame.fourth.glyph);
@@ -98,40 +90,27 @@ fn any_style_changed(old_frame: Frame, new_frame: Frame) -> (result: bool) {
     return mask_any(style_mask_changed(old_frame, new_frame));
 }
 
-fn all_glyphs_equal(old_frame: Frame, new_frame: Frame) -> (result: bool) {
-    return mask_none(glyph_mask_changed(old_frame, new_frame));
-}
-
-// Damage: bounded scan over four cells using `iterate` and `select`.
-
 fn bool_not(value: bool) -> (result: bool) {
     return select(value, false, true);
 }
 
 fn frame_damage(old_frame: Frame, new_frame: Frame) -> (result: Damage) {
-    let dims_changed: bool = (old_frame.width != new_frame.width) || (old_frame.height != new_frame.height);
+    let dims_changed: bool = old_frame.width != new_frame.width || old_frame.height != new_frame.height;
     if dims_changed {
-        return Damage { x: 0, y: 0, w: new_frame.width, h: new_frame.height, changed_cells: 4, any_changed: true };
+        return Damage { x: 0, y: 0, w: new_frame.width, h: new_frame.height, changed_cells: 4, any_changed: true, full_redraw: true };
     }
     let cells: [Cell; 4] = [new_frame.first, new_frame.second, new_frame.third, new_frame.fourth];
     let olds: [Cell; 4] = [old_frame.first, old_frame.second, old_frame.third, old_frame.fourth];
-    iterate i over cells carrying acc: Damage = Damage { x: 0, y: 0, w: 0, h: 0, changed_cells: 0, any_changed: false } {
+    iterate i over cells carrying acc: Damage = Damage { x: 0, y: 0, w: 0, h: 0, changed_cells: 0, any_changed: false, full_redraw: false } {
         let old_cell: Cell = olds[i];
         let new_cell: Cell = cells[i];
-        let equal: bool = cell_equal(old_cell, new_cell);
-        let changed: bool = bool_not(equal);
-        let new_count: i64 = acc.changed_cells +% select(changed, 1, 0);
-        let new_any: bool = acc.any_changed || changed;
+        let changed: bool = bool_not(cell_equal(old_cell, new_cell));
         let old_rect: Rect = cell_rect(old_cell);
         let new_rect: Rect = cell_rect(new_cell);
         let both_rect: Rect = rect_union(old_rect, new_rect);
-        let damage_rect: Rect = Rect { origin: Point { column: acc.x, row: acc.y }, size: Size { columns: acc.w, rows: acc.h } };
-        let empty_damage: bool = rect_is_empty(damage_rect);
-        let base_rect: Rect = select(empty_damage && changed, both_rect, damage_rect);
-        let not_changed: bool = bool_not(changed);
-        let use_base: bool = empty_damage || not_changed;
-        let unioned: Rect = select(use_base, base_rect, rect_union(damage_rect, both_rect));
-        next acc = Damage { x: unioned.origin.column, y: unioned.origin.row, w: unioned.size.columns, h: unioned.size.rows, changed_cells: new_count, any_changed: new_any };
+        let current_rect: Rect = Rect { origin: Point { column: acc.x, row: acc.y }, size: Size { columns: acc.w, rows: acc.h } };
+        let next_rect: Rect = select(changed, rect_union(current_rect, both_rect), current_rect);
+        next acc = Damage { x: next_rect.origin.column, y: next_rect.origin.row, w: next_rect.size.columns, h: next_rect.size.rows, changed_cells: acc.changed_cells +% select(changed, 1, 0), any_changed: acc.any_changed || changed, full_redraw: false };
     }
     return acc;
 }
@@ -145,24 +124,24 @@ fn damage_count(damage: Damage) -> (result: i64) {
 }
 
 fn damage_covers_all(damage: Damage, frame: Frame) -> (result: bool) {
-    let covers: bool = (damage.x == 0) && (damage.y == 0) && (damage.w == frame.width) && (damage.h == frame.height);
-    return covers && damage.any_changed;
+    let covers: bool = damage.x == 0 && damage.y == 0 && damage.w == frame.width && damage.h == frame.height;
+    return (covers && damage.any_changed) || damage.full_redraw;
 }
 
 fn frame_clip(frame: Frame, clip: Rect) -> (result: Frame) {
-    let viewport: Rect = clip;
-    let ca: Cell = select(cell_visible(frame.first, viewport), frame.first, Cell { column: frame.first.column, row: frame.first.row, glyph: 0, style: 0 });
-    let cb: Cell = select(cell_visible(frame.second, viewport), frame.second, Cell { column: frame.second.column, row: frame.second.row, glyph: 0, style: 0 });
-    let cc: Cell = select(cell_visible(frame.third, viewport), frame.third, Cell { column: frame.third.column, row: frame.third.row, glyph: 0, style: 0 });
-    let cd: Cell = select(cell_visible(frame.fourth, viewport), frame.fourth, Cell { column: frame.fourth.column, row: frame.fourth.row, glyph: 0, style: 0 });
+    let blank: Cell = Cell { column: 0, row: 0, glyph: 0, style: 0 };
+    let ca: Cell = select(cell_visible(frame.first, clip), frame.first, blank);
+    let cb: Cell = select(cell_visible(frame.second, clip), frame.second, blank);
+    let cc: Cell = select(cell_visible(frame.third, clip), frame.third, blank);
+    let cd: Cell = select(cell_visible(frame.fourth, clip), frame.fourth, blank);
     return Frame { width: frame.width, height: frame.height, first: ca, second: cb, third: cc, fourth: cd };
 }
 
 fn frame_translate(frame: Frame, dx: i64, dy: i64) -> (result: Frame) {
-    let ta: Cell = Cell { column: frame.first.column +% dx, row: frame.first.row +% dy, glyph: frame.first.glyph, style: frame.first.style };
-    let tb: Cell = Cell { column: frame.second.column +% dx, row: frame.second.row +% dy, glyph: frame.second.glyph, style: frame.second.style };
-    let tc: Cell = Cell { column: frame.third.column +% dx, row: frame.third.row +% dy, glyph: frame.third.glyph, style: frame.third.style };
-    let td: Cell = Cell { column: frame.fourth.column +% dx, row: frame.fourth.row +% dy, glyph: frame.fourth.glyph, style: frame.fourth.style };
+    let ta: Cell = select(cell_is_empty(frame.first), frame.first, Cell { column: frame.first.column +% dx, row: frame.first.row +% dy, glyph: frame.first.glyph, style: frame.first.style });
+    let tb: Cell = select(cell_is_empty(frame.second), frame.second, Cell { column: frame.second.column +% dx, row: frame.second.row +% dy, glyph: frame.second.glyph, style: frame.second.style });
+    let tc: Cell = select(cell_is_empty(frame.third), frame.third, Cell { column: frame.third.column +% dx, row: frame.third.row +% dy, glyph: frame.third.glyph, style: frame.third.style });
+    let td: Cell = select(cell_is_empty(frame.fourth), frame.fourth, Cell { column: frame.fourth.column +% dx, row: frame.fourth.row +% dy, glyph: frame.fourth.glyph, style: frame.fourth.style });
     return Frame { width: frame.width, height: frame.height, first: ta, second: tb, third: tc, fourth: td };
 }
 

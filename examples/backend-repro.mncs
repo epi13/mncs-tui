@@ -1,0 +1,14 @@
+mncs 0.8;
+
+// Minimal backend probe: importing the TUI layout adapter and executing one
+// weighted solve is kept separate from the full demo while the compiler
+// backend regression is tracked upstream.
+module examples.backend_repro;
+
+use mncs_tui.layout;
+
+fn probe() -> (result: i64) {
+    let grow: Constraint = make_grow_weighted(0, 100, 1);
+    let split: Split4 = distribute_extra4(10, grow, grow, make_fixed(0), make_fixed(0));
+    return split.v0;
+}

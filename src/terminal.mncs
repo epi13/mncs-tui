@@ -1,24 +1,19 @@
 mncs 0.8;
 
-// Terminal boundary: explicit separation of state, capabilities, semantic
-// commands, ANSI encoding, and host I/O. This module is the semantic
-// command layer (state + commands); actual byte encoding and host effects
-// are the adapter's responsibility and remain documented as future work.
-
+// Terminal projection: lifecycle state plus an explicit, bounded command
+// stream. The parser/byte encoder belongs to mncs-language; this module only
+// decides which semantic cells must be cleared or written.
 module mncs_tui.terminal;
 
 use mncs.core.geometry.v1;
 use mncs_tui.render;
-use mncs_tui.geometry;
 
-enum TerminalOp { CLEAR, CURSOR_MOVE, CURSOR_HIDE, CURSOR_SHOW, ENTER_ALT, EXIT_ALT, WRITE_CELL, STYLE_SET }
+enum TerminalOp { CLEAR, CLEAR_CELL, CURSOR_MOVE, CURSOR_HIDE, CURSOR_SHOW, ENTER_ALT, EXIT_ALT, WRITE_CELL, STYLE_SET }
 
 record TerminalCommand { op: TerminalOp, column: i64, row: i64, glyph: i64, style: i64 }
 record TerminalState { width: i64, height: i64, alt: bool, cursor_visible: bool, initialized: bool, generation: i64 }
 record TerminalCaps { alt_supported: bool, style_supported: bool, width: i64, height: i64 }
-record FrameCommands { move_cmd: TerminalCommand, first: TerminalCommand, second: TerminalCommand, third: TerminalCommand, fourth: TerminalCommand, count: i64 }
-
-// ---- Lifecycle ----
+record FrameCommands { clear_cmd: TerminalCommand, move_cmd: TerminalCommand, first: TerminalCommand, second: TerminalCommand, third: TerminalCommand, fourth: TerminalCommand, fifth: TerminalCommand, sixth: TerminalCommand, seventh: TerminalCommand, eighth: TerminalCommand, cell_count: i64, command_count: i64, full_redraw: bool }
 
 fn terminal_init(width: i64, height: i64) -> (result: TerminalState) {
     if width <= 0 || height <= 0 {
@@ -64,10 +59,8 @@ fn terminal_is_initialized(state: TerminalState) -> (result: bool) {
 }
 
 fn terminal_needs_full_redraw(old_state: TerminalState, new_state: TerminalState) -> (result: bool) {
-    return (old_state.width != new_state.width) || (old_state.height != new_state.height) || (old_state.generation != new_state.generation);
+    return old_state.width != new_state.width || old_state.height != new_state.height || old_state.generation != new_state.generation;
 }
-
-// ---- Capabilities ----
 
 fn caps_make(width: i64, height: i64, alt: bool, style: bool) -> (result: TerminalCaps) {
     return TerminalCaps { alt_supported: alt, style_supported: style, width: width, height: height };
@@ -77,10 +70,16 @@ fn caps_supports_alt(caps: TerminalCaps) -> (result: bool) {
     return caps.alt_supported;
 }
 
-// ---- Commands ----
+fn command_empty() -> (result: TerminalCommand) {
+    return TerminalCommand { op: TerminalOp.CLEAR_CELL, column: 0, row: 0, glyph: 0, style: 0 };
+}
 
 fn command_clear() -> (result: TerminalCommand) {
     return TerminalCommand { op: TerminalOp.CLEAR, column: 0, row: 0, glyph: 0, style: 0 };
+}
+
+fn command_clear_cell(column: i64, row: i64) -> (result: TerminalCommand) {
+    return TerminalCommand { op: TerminalOp.CLEAR_CELL, column: column, row: row, glyph: 0, style: 0 };
 }
 
 fn command_move(column: i64, row: i64) -> (result: TerminalCommand) {
@@ -95,58 +94,117 @@ fn command_style(style: i64) -> (result: TerminalCommand) {
     return TerminalCommand { op: TerminalOp.STYLE_SET, column: 0, row: 0, glyph: 0, style: style };
 }
 
+fn command_is_clear_cell(command: TerminalCommand) -> (result: bool) {
+    return match command.op {
+        CLEAR_CELL => true,
+        CLEAR => false,
+        CURSOR_MOVE => false,
+        CURSOR_HIDE => false,
+        CURSOR_SHOW => false,
+        ENTER_ALT => false,
+        EXIT_ALT => false,
+        WRITE_CELL => false,
+        STYLE_SET => false,
+    };
+}
+
+fn command_is_write(command: TerminalCommand) -> (result: bool) {
+    return match command.op {
+        WRITE_CELL => true,
+        CLEAR_CELL => false,
+        CLEAR => false,
+        CURSOR_MOVE => false,
+        CURSOR_HIDE => false,
+        CURSOR_SHOW => false,
+        ENTER_ALT => false,
+        EXIT_ALT => false,
+        STYLE_SET => false,
+    };
+}
+
 fn bool_not_local(value: bool) -> (result: bool) {
     return select(value, false, true);
 }
 
-// Damage-aware projection: old+new frames determine which cells actually
-// changed. Sparse damage produces only those writes; count matches slots.
+fn append_command(acc: FrameCommands, command: TerminalCommand, emit: bool) -> (result: FrameCommands) {
+    let slot0: bool = emit && acc.cell_count == 0;
+    let slot1: bool = emit && acc.cell_count == 1;
+    let slot2: bool = emit && acc.cell_count == 2;
+    let slot3: bool = emit && acc.cell_count == 3;
+    let slot4: bool = emit && acc.cell_count == 4;
+    let slot5: bool = emit && acc.cell_count == 5;
+    let slot6: bool = emit && acc.cell_count == 6;
+    let slot7: bool = emit && acc.cell_count == 7;
+    let next_count: i64 = acc.cell_count +% select(emit, 1, 0);
+    return FrameCommands { clear_cmd: acc.clear_cmd, move_cmd: acc.move_cmd, first: select(slot0, command, acc.first), second: select(slot1, command, acc.second), third: select(slot2, command, acc.third), fourth: select(slot3, command, acc.fourth), fifth: select(slot4, command, acc.fifth), sixth: select(slot5, command, acc.sixth), seventh: select(slot6, command, acc.seventh), eighth: select(slot7, command, acc.eighth), cell_count: next_count, command_count: acc.command_count, full_redraw: acc.full_redraw };
+}
+
+fn project_cell(acc: FrameCommands, old_cell: Cell, new_cell: Cell) -> (result: FrameCommands) {
+    let old_present: bool = bool_not_local(cell_is_empty(old_cell));
+    let new_present: bool = bool_not_local(cell_is_empty(new_cell));
+    let changed: bool = bool_not_local(cell_equal(old_cell, new_cell));
+    let moved: bool = old_present && new_present && (old_cell.column != new_cell.column || old_cell.row != new_cell.row);
+    let clear_old: bool = changed && old_present && (moved || bool_not_local(new_present));
+    let write_new: bool = changed && new_present;
+    let after_clear: FrameCommands = append_command(acc, command_clear_cell(old_cell.column, old_cell.row), clear_old);
+    return append_command(after_clear, command_write(new_cell), write_new);
+}
+
+fn finalize_commands(acc: FrameCommands) -> (result: FrameCommands) {
+    let prefix: i64 = select(acc.cell_count > 0, select(acc.full_redraw, 2, 1), 0);
+    return FrameCommands { clear_cmd: acc.clear_cmd, move_cmd: acc.move_cmd, first: acc.first, second: acc.second, third: acc.third, fourth: acc.fourth, fifth: acc.fifth, sixth: acc.sixth, seventh: acc.seventh, eighth: acc.eighth, cell_count: acc.cell_count, command_count: prefix +% acc.cell_count, full_redraw: acc.full_redraw };
+}
+
+fn initial_commands(clear: bool, column: i64, row: i64, full_redraw: bool) -> (result: FrameCommands) {
+    let empty: TerminalCommand = command_empty();
+    return FrameCommands { clear_cmd: command_clear(), move_cmd: command_move(column, row), first: empty, second: empty, third: empty, fourth: empty, fifth: empty, sixth: empty, seventh: empty, eighth: empty, cell_count: 0, command_count: select(clear, 1, 0), full_redraw: full_redraw };
+}
+
+fn full_redraw_commands(frame: Frame) -> (result: FrameCommands) {
+    let start: FrameCommands = initial_commands(true, 0, 0, true);
+    let a: FrameCommands = append_command(start, command_write(frame.first), bool_not_local(cell_is_empty(frame.first)));
+    let b: FrameCommands = append_command(a, command_write(frame.second), bool_not_local(cell_is_empty(frame.second)));
+    let c: FrameCommands = append_command(b, command_write(frame.third), bool_not_local(cell_is_empty(frame.third)));
+    let d: FrameCommands = append_command(c, command_write(frame.fourth), bool_not_local(cell_is_empty(frame.fourth)));
+    return finalize_commands(d);
+}
 
 fn damage_to_commands(old_frame: Frame, new_frame: Frame) -> (result: FrameCommands) {
     let damage: Damage = frame_damage(old_frame, new_frame);
-    let move_cmd: TerminalCommand = command_move(damage.x, damage.y);
-    let olds: [Cell; 4] = [old_frame.first, old_frame.second, old_frame.third, old_frame.fourth];
-    let news: [Cell; 4] = [new_frame.first, new_frame.second, new_frame.third, new_frame.fourth];
-    let empty_cmd: TerminalCommand = TerminalCommand { op: TerminalOp.WRITE_CELL, column: 0, row: 0, glyph: 0, style: 0 };
-    iterate i over news carrying acc: FrameCommands = FrameCommands { move_cmd: move_cmd, first: empty_cmd, second: empty_cmd, third: empty_cmd, fourth: empty_cmd, count: 0 } {
-        let old_cell: Cell = olds[i];
-        let new_cell: Cell = news[i];
-        let changed: bool = bool_not_local(cell_equal(old_cell, new_cell));
-        let cmd: TerminalCommand = command_write(new_cell);
-        let is_slot0: bool = changed && acc.count == 0;
-        let is_slot1: bool = changed && acc.count == 1;
-        let is_slot2: bool = changed && acc.count == 2;
-        let is_slot3: bool = changed && acc.count == 3;
-        let nfirst: TerminalCommand = select(is_slot0, cmd, acc.first);
-        let nsecond: TerminalCommand = select(is_slot1, cmd, acc.second);
-        let nthird: TerminalCommand = select(is_slot2, cmd, acc.third);
-        let nfourth: TerminalCommand = select(is_slot3, cmd, acc.fourth);
-        let ncount: i64 = acc.count +% select(changed, 1, 0);
-        next acc = FrameCommands { move_cmd: move_cmd, first: nfirst, second: nsecond, third: nthird, fourth: nfourth, count: ncount };
+    if damage.full_redraw {
+        return full_redraw_commands(new_frame);
     }
-    return acc;
+    let start: FrameCommands = initial_commands(false, damage.x, damage.y, false);
+    let a: FrameCommands = project_cell(start, old_frame.first, new_frame.first);
+    let b: FrameCommands = project_cell(a, old_frame.second, new_frame.second);
+    let c: FrameCommands = project_cell(b, old_frame.third, new_frame.third);
+    let d: FrameCommands = project_cell(c, old_frame.fourth, new_frame.fourth);
+    return finalize_commands(d);
 }
 
-// Legacy wrapper: damage + new frame (kept for compatibility, now delegates
-// to the correct old/new projection with an empty old frame as conservative
-// full-redraw).
 fn damage_to_commands_legacy(damage: Damage, frame: Frame) -> (result: FrameCommands) {
-    let empty_cell: Cell = Cell { column: 0, row: 0, glyph: 0, style: 0 };
-    let empty_frame: Frame = Frame { width: frame.width, height: frame.height, first: empty_cell, second: empty_cell, third: empty_cell, fourth: empty_cell };
-    return damage_to_commands(empty_frame, frame);
+    let empty: Cell = Cell { column: 0, row: 0, glyph: 0, style: 0 };
+    let old_frame: Frame = Frame { width: frame.width, height: frame.height, first: empty, second: empty, third: empty, fourth: empty };
+    if damage.full_redraw {
+        return full_redraw_commands(frame);
+    }
+    return damage_to_commands(old_frame, frame);
 }
 
 fn frame_to_commands(frame: Frame) -> (result: FrameCommands) {
-    let move_cmd: TerminalCommand = command_move(0, 0);
-    let w0: TerminalCommand = command_write(frame.first);
-    let w1: TerminalCommand = command_write(frame.second);
-    let w2: TerminalCommand = command_write(frame.third);
-    let w3: TerminalCommand = command_write(frame.fourth);
-    return FrameCommands { move_cmd: move_cmd, first: w0, second: w1, third: w2, fourth: w3, count: 4 };
+    return full_redraw_commands(frame);
 }
 
 fn commands_count(cmds: FrameCommands) -> (result: i64) {
-    return cmds.count;
+    return cmds.command_count;
+}
+
+fn commands_cell_count(cmds: FrameCommands) -> (result: i64) {
+    return cmds.cell_count;
+}
+
+fn commands_is_full_redraw(cmds: FrameCommands) -> (result: bool) {
+    return cmds.full_redraw;
 }
 
 fn terminal_width(state: TerminalState) -> (result: i64) {

@@ -1,0 +1,8 @@
+{
+  "schema_version": "0.2",
+  "name": "backend-repro",
+  "cases": [
+    { "id": "single-weighted-layout", "request": { "schema_version": "0.1", "target": { "module": "examples.backend_repro", "function": "probe" }, "arguments": [], "step_budget": 100 }, "expected_status": "budget_exhausted", "expected": [] }
+  ],
+  "properties": []
+}

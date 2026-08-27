@@ -1,0 +1,7 @@
+{
+  "schema_version": "0.1",
+  "target": { "module": "examples.backend_repro", "function": "probe" },
+  "arguments": [],
+  "step_budget": 20000,
+  "policy": { "allow_effects": false, "allow_unknown": false }
+}

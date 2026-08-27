@@ -1,0 +1,176 @@
+mncs 0.8;
+
+// Small, independent regression target. Each entry point returns 1 only when
+// the requested invariant is observed; it intentionally avoids the large
+// integrated call graph so backend failures remain diagnosable.
+module examples.focused_tests;
+
+use mncs.core.geometry.v1;
+use mncs_tui.layout;
+use mncs_tui.render;
+use mncs_tui.events;
+use mncs_tui.widgets;
+use mncs_tui.focus;
+use mncs_tui.terminal;
+
+fn ok(value: bool) -> (result: i64) {
+    if value { return 1; }
+    return 0;
+}
+
+fn base_tree() -> (result: WidgetTree) {
+    let root_id: WidgetId = WidgetId { value: 0 };
+    let root: Widget = Widget { id: root_id, kind: WidgetKind.CONTAINER, parent: WidgetId { value: 0 - 1 }, rect: Rect { origin: Point { column: 0, row: 0 }, size: Size { columns: 20, rows: 10 } }, focusable: false, visible: true };
+    let header: Widget = Widget { id: WidgetId { value: 1 }, kind: WidgetKind.PANE, parent: root_id, rect: Rect { origin: Point { column: 0, row: 0 }, size: Size { columns: 20, rows: 1 } }, focusable: false, visible: true };
+    let nav: Widget = Widget { id: WidgetId { value: 2 }, kind: WidgetKind.LIST, parent: root_id, rect: Rect { origin: Point { column: 0, row: 1 }, size: Size { columns: 5, rows: 8 } }, focusable: true, visible: true };
+    let main: Widget = Widget { id: WidgetId { value: 3 }, kind: WidgetKind.PANE, parent: root_id, rect: Rect { origin: Point { column: 5, row: 1 }, size: Size { columns: 15, rows: 8 } }, focusable: true, visible: true };
+    let status: Widget = Widget { id: WidgetId { value: 4 }, kind: WidgetKind.STATUS, parent: root_id, rect: Rect { origin: Point { column: 0, row: 9 }, size: Size { columns: 20, rows: 1 } }, focusable: false, visible: true };
+    return WidgetTree { root: root, first: header, second: nav, third: main, fourth: status };
+}
+
+fn layout_equal_weights() -> (result: i64) {
+    let grow: Constraint = make_grow_weighted(0, 100, 1);
+    let result: RowSolveResult = solve_widths4_checked(10, grow, grow, make_fixed(0), make_fixed(0));
+    return ok(result.widths.w0 == 5 && result.widths.w1 == 5 && result.allocated == 10 && result.leftover == 0 && bool_not(result.overflow));
+}
+
+fn layout_weighted_ratio() -> (result: i64) {
+    let left: Constraint = make_grow_weighted(0, 100, 1);
+    let right: Constraint = make_grow_weighted(0, 100, 3);
+    let result: RowSolveResult = solve_widths4_checked(12, left, right, make_fixed(0), make_fixed(0));
+    return ok(result.widths.w0 == 3 && result.widths.w1 == 9 && result.allocated == 12);
+}
+
+fn layout_remainder_is_deterministic() -> (result: i64) {
+    let grow: Constraint = make_grow_weighted(0, 100, 1);
+    let result: RowSolveResult = solve_widths4_checked(5, grow, grow, make_fixed(0), make_fixed(0));
+    return ok(result.widths.w0 == 3 && result.widths.w1 == 2 && result.leftover == 0);
+}
+
+fn layout_caps_redistribute() -> (result: i64) {
+    let capped: Constraint = make_grow_weighted(0, 3, 1);
+    let open: Constraint = make_grow_weighted(0, 100, 1);
+    let result: RowSolveResult = solve_widths4_checked(10, capped, open, make_fixed(0), make_fixed(0));
+    return ok(result.widths.w0 == 3 && result.widths.w1 == 7 && result.allocated == 10);
+}
+
+fn layout_fixed_overflow_is_reported() -> (result: i64) {
+    let intrinsic: Constraint = make_intrinsic(10, 0, 20);
+    let result: RowSolveResult = solve_widths4_checked(5, intrinsic, make_fixed(0), make_fixed(0), make_fixed(0));
+    return ok(result.overflow && result.needed == 5 && result.allocated == 10 && result.widths.w0 == 10);
+}
+
+fn layout_grow_minimum_overflow_is_reported() -> (result: i64) {
+    let grow: Constraint = make_grow_weighted(4, 10, 1);
+    let result: RowSolveResult = solve_widths4_checked(5, grow, grow, make_fixed(0), make_fixed(0));
+    return ok(result.overflow && result.needed == 3 && result.allocated == 8 && result.widths.w0 == 4 && result.widths.w1 == 4);
+}
+
+fn layout_negative_and_zero_weights_are_safe() -> (result: i64) {
+    let negative: Constraint = make_grow_weighted(0, 100, 0 - 1);
+    let positive: Constraint = make_grow_weighted(0, 100, 2);
+    let only_positive: RowSolveResult = solve_widths4_checked(9, negative, positive, make_fixed(0), make_fixed(0));
+    let zero: RowSolveResult = solve_widths4_checked(5, make_grow_weighted(0, 100, 0), make_grow_weighted(0, 100, 0), make_fixed(0), make_fixed(0));
+    return ok(only_positive.widths.w0 == 0 && only_positive.widths.w1 == 9 && zero.widths.w0 == 0 && zero.widths.w1 == 0 && zero.leftover == 5 && zero.valid);
+}
+
+fn layout_vertical_conserves_space() -> (result: i64) {
+    let heights: ColumnSolveResult = solve_heights4_checked(10, make_fixed(2), make_grow(0, 20), make_fixed(1), make_fixed(0));
+    return ok(heights.heights.h0 == 2 && heights.heights.h1 == 7 && heights.heights.h2 == 1 && heights_sum(heights.heights) == 10);
+}
+
+fn render_unchanged_is_empty() -> (result: i64) {
+    let cell: Cell = Cell { column: 2, row: 3, glyph: 65, style: 1 };
+    let frame: Frame = Frame { width: 10, height: 5, first: cell, second: Cell { column: 0, row: 0, glyph: 0, style: 0 }, third: Cell { column: 0, row: 0, glyph: 0, style: 0 }, fourth: Cell { column: 0, row: 0, glyph: 0, style: 0 } };
+    return ok(damage_is_empty(frame_damage(frame, frame)));
+}
+
+fn render_style_change_is_damage() -> (result: i64) {
+    let old_cell: Cell = Cell { column: 2, row: 3, glyph: 65, style: 1 };
+    let new_cell: Cell = Cell { column: 2, row: 3, glyph: 65, style: 2 };
+    let old_frame: Frame = Frame { width: 10, height: 5, first: old_cell, second: Cell { column: 0, row: 0, glyph: 0, style: 0 }, third: Cell { column: 0, row: 0, glyph: 0, style: 0 }, fourth: Cell { column: 0, row: 0, glyph: 0, style: 0 } };
+    let new_frame: Frame = Frame { width: 10, height: 5, first: new_cell, second: Cell { column: 0, row: 0, glyph: 0, style: 0 }, third: Cell { column: 0, row: 0, glyph: 0, style: 0 }, fourth: Cell { column: 0, row: 0, glyph: 0, style: 0 } };
+    return ok(damage_count(frame_damage(old_frame, new_frame)) == 1 && any_style_changed(old_frame, new_frame));
+}
+
+fn render_move_clears_old_and_writes_new() -> (result: i64) {
+    let old_cell: Cell = Cell { column: 1, row: 1, glyph: 65, style: 1 };
+    let new_cell: Cell = Cell { column: 2, row: 1, glyph: 65, style: 1 };
+    let old_frame: Frame = Frame { width: 10, height: 5, first: old_cell, second: Cell { column: 0, row: 0, glyph: 0, style: 0 }, third: Cell { column: 0, row: 0, glyph: 0, style: 0 }, fourth: Cell { column: 0, row: 0, glyph: 0, style: 0 } };
+    let new_frame: Frame = Frame { width: 10, height: 5, first: new_cell, second: Cell { column: 0, row: 0, glyph: 0, style: 0 }, third: Cell { column: 0, row: 0, glyph: 0, style: 0 }, fourth: Cell { column: 0, row: 0, glyph: 0, style: 0 } };
+    let damage: Damage = frame_damage(old_frame, new_frame);
+    let commands: FrameCommands = damage_to_commands(old_frame, new_frame);
+    return ok(damage.x == 1 && damage.w == 2 && commands_count(commands) == 3 && commands_cell_count(commands) == 2 && command_is_clear_cell(commands.first) && command_is_write(commands.second));
+}
+
+fn render_disappear_clears_origin() -> (result: i64) {
+    let old_cell: Cell = Cell { column: 0, row: 0, glyph: 65, style: 1 };
+    let empty: Cell = Cell { column: 0, row: 0, glyph: 0, style: 0 };
+    let old_frame: Frame = Frame { width: 10, height: 5, first: old_cell, second: empty, third: empty, fourth: empty };
+    let new_frame: Frame = Frame { width: 10, height: 5, first: empty, second: empty, third: empty, fourth: empty };
+    let commands: FrameCommands = damage_to_commands(old_frame, new_frame);
+    return ok(commands_count(commands) == 2 && commands_cell_count(commands) == 1 && command_is_clear_cell(commands.first));
+}
+
+fn render_resize_forces_full_redraw() -> (result: i64) {
+    let cell: Cell = Cell { column: 2, row: 2, glyph: 65, style: 1 };
+    let old_frame: Frame = Frame { width: 10, height: 5, first: cell, second: Cell { column: 0, row: 0, glyph: 0, style: 0 }, third: Cell { column: 0, row: 0, glyph: 0, style: 0 }, fourth: Cell { column: 0, row: 0, glyph: 0, style: 0 } };
+    let new_frame: Frame = Frame { width: 20, height: 5, first: cell, second: Cell { column: 0, row: 0, glyph: 0, style: 0 }, third: Cell { column: 0, row: 0, glyph: 0, style: 0 }, fourth: Cell { column: 0, row: 0, glyph: 0, style: 0 } };
+    let commands: FrameCommands = damage_to_commands(old_frame, new_frame);
+    return ok(commands_is_full_redraw(commands) && commands_count(commands) == 3 && commands_cell_count(commands) == 1);
+}
+
+fn tree_clips_and_preserves_z_order() -> (result: i64) {
+    let tree: WidgetTree = base_tree();
+    let overlay: Widget = Widget { id: WidgetId { value: 5 }, kind: WidgetKind.OVERLAY, parent: tree.root.id, rect: Rect { origin: Point { column: 2, row: 2 }, size: Size { columns: 8, rows: 4 } }, focusable: true, visible: true };
+    let overlay_tree: WidgetTree = WidgetTree { root: tree.root, first: tree.first, second: tree.second, third: tree.third, fourth: overlay };
+    let top: i64 = tree_contains(overlay_tree, Point { column: 3, row: 3 });
+    let outside: i64 = tree_contains(overlay_tree, Point { column: 20, row: 3 });
+    return ok(top == 5 && outside == (0 - 1));
+}
+
+fn tree_hit_order_and_focus_order() -> (result: i64) {
+    let tree: WidgetTree = base_tree();
+    let nav_hit: HitTestResult = hit_test_point(Point { column: 1, row: 2 }, tree);
+    let main_hit: HitTestResult = hit_test_point(Point { column: 7, row: 2 }, tree);
+    let focus: FocusState = focus_init(tree);
+    let next_state: FocusState = focus_move_next(focus, tree);
+    let previous: FocusState = focus_move_prev(focus, tree);
+    return ok(nav_hit.hit && nav_hit.hit_id.value == 2 && main_hit.hit_id.value == 3 && focus.current.value == 2 && next_state.current.value == 3 && previous.current.value == 3);
+}
+
+fn events_use_upstream_ansi_meaning() -> (result: i64) {
+    let character: Event = normalize_sequence(1, 65, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+    let arrow: Event = normalize_sequence(3, 27, 91, 65, 0, 0, 0, 0, 0, 0, 0);
+    let focus: Event = normalize_sequence(3, 27, 91, 73, 0, 0, 0, 0, 0, 0, 0);
+    let paste_start: Event = normalize_sequence(6, 27, 91, 50, 48, 48, 126, 0, 0, 0, 0);
+    let paste_end: Event = normalize_sequence(6, 27, 91, 50, 48, 49, 126, 0, 0, 0, 0);
+    let mouse: Event = normalize_sequence(6, 27, 91, 77, 32, 35, 36, 0, 0, 0, 0);
+    let resize: Event = normalize_sequence(10, 27, 91, 56, 59, 50, 52, 59, 56, 48, 116);
+    return ok(event_is_key(character) && event_is_key(arrow) && event_is_focus(focus) && event_is_paste_start(paste_start) && event_is_paste_end(paste_end) && event_is_mouse(mouse) && event_is_resize(resize));
+}
+
+fn events_preserve_unknown() -> (result: i64) {
+    let unknown: Event = normalize_sequence(3, 27, 91, 90, 0, 0, 0, 0, 0, 0, 0);
+    return ok(event_is_unknown(unknown));
+}
+
+fn terminal_lifecycle_is_paired() -> (result: i64) {
+    let initial: TerminalState = terminal_init(80, 24);
+    let alt: TerminalState = terminal_enter_alt(initial);
+    let resized: TerminalState = terminal_resize(alt, 100, 30);
+    let cleaned: TerminalState = terminal_cleanup(resized);
+    return ok(terminal_is_initialized(initial) && alt.alt && resized.width == 100 && resized.height == 30 && bool_not(cleaned.initialized) && cleaned.generation == 4);
+}
+
+fn focused_layout() -> (result: i64) {
+    return ok(layout_equal_weights() == 1 && layout_weighted_ratio() == 1 && layout_remainder_is_deterministic() == 1 && layout_caps_redistribute() == 1 && layout_fixed_overflow_is_reported() == 1 && layout_grow_minimum_overflow_is_reported() == 1 && layout_negative_and_zero_weights_are_safe() == 1 && layout_vertical_conserves_space() == 1);
+}
+
+fn focused_render() -> (result: i64) {
+    return ok(render_unchanged_is_empty() == 1 && render_style_change_is_damage() == 1 && render_move_clears_old_and_writes_new() == 1 && render_disappear_clears_origin() == 1 && render_resize_forces_full_redraw() == 1);
+}
+
+fn focused_interaction() -> (result: i64) {
+    return ok(tree_clips_and_preserves_z_order() == 1 && tree_hit_order_and_focus_order() == 1 && events_use_upstream_ansi_meaning() == 1 && events_preserve_unknown() == 1 && terminal_lifecycle_is_paired() == 1);
+}

@@ -1,0 +1,7 @@
+{
+  "schema_version": "0.1",
+  "target": { "module": "examples.interaction_probe", "function": "tree_and_focus" },
+  "arguments": [],
+  "step_budget": 100000,
+  "policy": { "allow_effects": false, "allow_unknown": false }
+}
