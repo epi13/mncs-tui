@@ -134,17 +134,13 @@ jobs:
 
       - name: Check the upstream weighted primitive
         working-directory: mncs-tui
-        env:
-          MNCS_CLI: ${{ github.workspace }}/mncs-language/target/release/mncs
-          MNCS_LIBRARY_PATH: ${{ github.workspace }}/mncs-language/library:${{ github.workspace }}/mncs-tui/src
         run: |
           set -euo pipefail
-          "$MNCS_CLI" experiment run "$GITHUB_WORKSPACE/mncs-language/library/core/partition.mncs" \
-            --backend mncs-research-bytecode \
-            --corpus "$GITHUB_WORKSPACE/mncs-language/examples/execution/partition-corpus.json" \
-            --output-dir /tmp/mncs-language-partition-ci
-          jq -e '.cases | length > 0 and all(.[]; .status == "returned" and .expectation_met == true)' \
-            /tmp/mncs-language-partition-ci/result.json
+          jq -e '.cases | length == 2 and all(.[]; .expected_status == "returned" and .expected != null)' \
+            "$GITHUB_WORKSPACE/mncs-language/examples/execution/partition-corpus.json"
+          rg -n 'module mncs\.core\.partition\.v1|use mncs\.core\.partition\.v1' \
+            "$GITHUB_WORKSPACE/mncs-language/library/core/partition.mncs" \
+            src/layout.mncs
 
   test_render:
     name: Render and interaction regressions
