@@ -16,23 +16,26 @@ use mncs_tui.terminal;
 
 fn check_layout(terminal: Size) -> (result: bool) {
     let demo: DemoLayout = demo_layout(terminal);
-    // Layout checks are known to work individually; the &&/select combination
-    // with demo_layout + rect_contains_rect triggers a backend hang.
-    // Individual checks validated separately in unit tests.
-    return true;
+    return layout_usable(demo);
+}
+
+fn layout_usable(demo: DemoLayout) -> (result: bool) {
+    let clipped_ok: bool = rect_contains_rect(demo.window, demo.header) && rect_contains_rect(demo.window, demo.body) && rect_contains_rect(demo.window, demo.nav) && rect_contains_rect(demo.window, demo.main_panel) && rect_contains_rect(demo.window, demo.status);
+    return select(demo.overflow, clipped_ok, layout_contains_all(demo));
 }
 
 fn make_widgets(demo: DemoLayout) -> (result: WidgetTree) {
-    let header_widget: Widget = Widget { id: WidgetId { value: 1 }, kind: WidgetKind.PANE, parent: WidgetId { value: 0 }, rect: demo.header, focusable: false, visible: true };
-    let nav_widget: Widget = Widget { id: WidgetId { value: 2 }, kind: WidgetKind.LIST, parent: WidgetId { value: 0 }, rect: demo.nav, focusable: true, visible: true };
-    let main_widget: Widget = Widget { id: WidgetId { value: 3 }, kind: WidgetKind.PANE, parent: WidgetId { value: 0 }, rect: demo.main_panel, focusable: true, visible: true };
-    let status_widget: Widget = Widget { id: WidgetId { value: 4 }, kind: WidgetKind.STATUS, parent: WidgetId { value: 0 }, rect: demo.status, focusable: false, visible: true };
-    return WidgetTree { root: header_widget, first: nav_widget, second: main_widget, third: status_widget };
+    let root_widget: Widget = Widget { id: WidgetId { value: 0 }, kind: WidgetKind.CONTAINER, parent: WidgetId { value: 0 - 1 }, rect: demo.window, focusable: false, visible: true };
+    let header_widget: Widget = Widget { id: WidgetId { value: 1 }, kind: WidgetKind.PANE, parent: root_widget.id, rect: demo.header, focusable: false, visible: true };
+    let nav_widget: Widget = Widget { id: WidgetId { value: 2 }, kind: WidgetKind.LIST, parent: root_widget.id, rect: demo.nav, focusable: true, visible: true };
+    let main_widget: Widget = Widget { id: WidgetId { value: 3 }, kind: WidgetKind.PANE, parent: root_widget.id, rect: demo.main_panel, focusable: true, visible: true };
+    let status_widget: Widget = Widget { id: WidgetId { value: 4 }, kind: WidgetKind.STATUS, parent: root_widget.id, rect: demo.status, focusable: false, visible: true };
+    return WidgetTree { root: root_widget, first: header_widget, second: nav_widget, third: main_widget, fourth: status_widget };
 }
 
 fn render_demo(demo: DemoLayout) -> (result: Frame) {
     let tree: WidgetTree = make_widgets(demo);
-    let nav_frame: Frame = widget_frame(tree.first, 65);
+    let nav_frame: Frame = widget_frame(tree.second, 65);
     return nav_frame;
 }
 
@@ -42,17 +45,17 @@ fn diff_demo(old_frame: Frame, new_frame: Frame) -> (result: Damage) {
 
 fn focus_demo(demo: DemoLayout) -> (result: i64) {
     let tree: WidgetTree = make_widgets(demo);
-    let focus: FocusState = focus_init(tree.first.id);
+    let focus: FocusState = focus_init(tree);
     let tab_key: KeyEvent = normalize_key(9, 0);
     let tab_event: Event = Event.Key { key: tab_key };
-    let dispatched: DispatchResult = dispatch_event(tab_event, focus, tree.first, tree.second, tree.third);
+    let dispatched: DispatchResult = dispatch_event(tab_event, focus, tree);
     return dispatched.new_focus.value;
 }
 
 fn hit_demo(demo: DemoLayout) -> (result: i64) {
     let tree: WidgetTree = make_widgets(demo);
     let point: Point = Point { column: demo.nav.origin.column +% 1, row: demo.nav.origin.row +% 1 };
-    let hit: HitTestResult = hit_test_point(point, tree.first, tree.second, tree.third);
+    let hit: HitTestResult = hit_test_point(point, tree);
     if hit.hit {
         return hit.hit_id.value;
     }
@@ -84,13 +87,12 @@ fn integrated(columns: i64, rows: i64) -> (result: i64) {
     let nav_frame: Frame = render_demo(demo);
     let damage: Damage = diff_demo(empty_frame, nav_frame);
     let damage_ok: bool = damage.any_changed;
-    // Resize check - skip second demo_layout call to avoid hang
-    // let new_size: Size = Size { columns: columns +% 10, rows: rows };
-    // let resized_demo: DemoLayout = demo_layout(new_size);
-    let resized_ok: bool = true; // layout_contains_all(resized_demo);
-    // Combine all checks with select to avoid && backend hang
+    let projection: FrameCommands = damage_to_commands(empty_frame, nav_frame);
+    let projection_ok: bool = commands_count(projection) == 2 && commands_cell_count(projection) == 1;
+    let resized_demo: DemoLayout = demo_layout(Size { columns: columns +% 10, rows: rows });
+    let resized_ok: bool = layout_usable(resized_demo);
     let a: bool = layout_ok && resized_ok;
-    let b: bool = select(a, damage_ok, false);
+    let b: bool = select(a, damage_ok && projection_ok, false);
     let c: bool = select(b, hit_id == 2, false);
     let d: bool = select(c, focus_next == 3, false);
     let all: bool = select(d, term_gen == 4, false);

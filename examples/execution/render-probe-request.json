@@ -1,0 +1,7 @@
+{
+  "schema_version": "0.1",
+  "target": { "module": "examples.render_probe", "function": "render_damage_and_projection" },
+  "arguments": [],
+  "step_budget": 100000,
+  "policy": { "allow_effects": false, "allow_unknown": false }
+}

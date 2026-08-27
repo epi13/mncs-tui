@@ -19,7 +19,6 @@ jobs:
       - name: Checkout mncs-tui
         uses: actions/checkout@v4
         with:
-          repository: epi13/mncs-tui
           path: mncs-tui
 
       - name: Checkout mncs-language
@@ -30,8 +29,6 @@ jobs:
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -41,33 +38,45 @@ jobs:
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             mncs-language/target
-            mncs-tui/target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Build mncs-cli
         working-directory: mncs-language
         run: cargo build --release -p mncs-cli
 
-      - name: Validate mncs-tui sources
+      - name: Validate source and examples
         working-directory: mncs-tui
         env:
+          MNCS_CLI: ${{ github.workspace }}/mncs-language/target/release/mncs
           MNCS_LIBRARY_PATH: ${{ github.workspace }}/mncs-language/library:${{ github.workspace }}/mncs-tui/src
         run: |
-          cargo run --manifest-path ../mncs-language/Cargo.toml -p mncs-cli -- validate src/geometry.mncs
-          cargo run --manifest-path ../mncs-language/Cargo.toml -p mncs-cli -- validate src/layout.mncs
-          cargo run --manifest-path ../mncs-language/Cargo.toml -p mncs-cli -- validate src/render.mncs
-          cargo run --manifest-path ../mncs-language/Cargo.toml -p mncs-cli -- validate src/events.mncs
-          cargo run --manifest-path ../mncs-language/Cargo.toml -p mncs-cli -- validate src/widgets.mncs
-          cargo run --manifest-path ../mncs-language/Cargo.toml -p mncs-cli -- validate src/focus.mncs
-          cargo run --manifest-path ../mncs-language/Cargo.toml -p mncs-cli -- validate src/terminal.mncs
+          set -euo pipefail
+          while IFS= read -r -d '' source; do
+            "$MNCS_CLI" validate "$source"
+          done < <(find src -maxdepth 1 -type f -name '*.mncs' -print0 | sort -z)
+          for source in \
+            examples/first-layout.mncs \
+            examples/full-demo.mncs \
+            examples/focused-tests.mncs \
+            examples/render-probe.mncs \
+            examples/interaction-probe.mncs \
+            examples/backend-repro.mncs; do
+            "$MNCS_CLI" validate "$source"
+          done
+          if rg -n 'return true|= true;[[:space:]]*//|avoid hang|skip.*hang' examples/full-demo.mncs; then
+            echo "full-demo contains an unconditional or hang-masking assertion" >&2
+            exit 1
+          fi
 
-      - name: Validate examples
+      - name: Run bounded source studies
         working-directory: mncs-tui
         env:
+          MNCS_CLI: ${{ github.workspace }}/mncs-language/target/release/mncs
           MNCS_LIBRARY_PATH: ${{ github.workspace }}/mncs-language/library:${{ github.workspace }}/mncs-tui/src
         run: |
-          cargo run --manifest-path ../mncs-language/Cargo.toml -p mncs-cli -- validate examples/full-demo.mncs
-          cargo run --manifest-path ../mncs-language/Cargo.toml -p mncs-cli -- validate examples/first-layout.mncs
+          set -euo pipefail
+          "$MNCS_CLI" source-study examples/full-demo.mncs > /tmp/mncs-tui-full-demo-source-study.json
+          "$MNCS_CLI" source-study examples/focused-tests.mncs > /tmp/mncs-tui-focused-source-study.json
 
   test_layout:
     name: Layout solver tests
@@ -78,7 +87,6 @@ jobs:
       - name: Checkout mncs-tui
         uses: actions/checkout@v4
         with:
-          repository: epi13/mncs-tui
           path: mncs-tui
 
       - name: Checkout mncs-language
@@ -98,23 +106,53 @@ jobs:
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             mncs-language/target
-            mncs-tui/target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Build mncs-cli
         working-directory: mncs-language
         run: cargo build --release -p mncs-cli
 
-      - name: Run layout solver tests
+      - name: Check semantic layout body
         working-directory: mncs-tui
         env:
+          MNCS_CLI: ${{ github.workspace }}/mncs-language/target/release/mncs
           MNCS_LIBRARY_PATH: ${{ github.workspace }}/mncs-language/library:${{ github.workspace }}/mncs-tui/src
         run: |
-          # Test basic layout
-          cargo run --manifest-path ../mncs-language/Cargo.toml -p mncs-cli -- experiment run examples/full-demo.mncs --backend mncs-research-bytecode --corpus .github/workflows/corpus/layout_basic.json 2>&1 | head -50
+          set -euo pipefail
+          timeout 300s "$MNCS_CLI" execute examples/backend-repro.mncs examples/execution/backend-repro-request.json > /tmp/mncs-tui-layout-body.json
+          jq -e '.status == "returned" and .returned[0].integer.value == 5' /tmp/mncs-tui-layout-body.json
+
+      - name: Record the research-backend regression with a bounded fixture
+        working-directory: mncs-tui
+        env:
+          MNCS_CLI: ${{ github.workspace }}/mncs-language/target/release/mncs
+          MNCS_LIBRARY_PATH: ${{ github.workspace }}/mncs-language/library:${{ github.workspace }}/mncs-tui/src
+        run: |
+          set -euo pipefail
+          timeout 300s "$MNCS_CLI" experiment run examples/backend-repro.mncs \
+            --backend mncs-research-bytecode \
+            --corpus .github/workflows/corpus/backend-repro.json \
+            --output-dir /tmp/mncs-tui-backend-repro
+          jq -e '.cases | length == 1' /tmp/mncs-tui-backend-repro/result.json
+          jq -e '.cases[0].status == "budget_exhausted" and .cases[0].status_met == true' \
+            /tmp/mncs-tui-backend-repro/result.json
+
+      - name: Check the upstream weighted primitive
+        working-directory: mncs-tui
+        env:
+          MNCS_CLI: ${{ github.workspace }}/mncs-language/target/release/mncs
+          MNCS_LIBRARY_PATH: ${{ github.workspace }}/mncs-language/library:${{ github.workspace }}/mncs-tui/src
+        run: |
+          set -euo pipefail
+          "$MNCS_CLI" experiment run "$GITHUB_WORKSPACE/mncs-language/library/core/partition.mncs" \
+            --backend mncs-research-bytecode \
+            --corpus "$GITHUB_WORKSPACE/mncs-language/examples/execution/partition-corpus.json" \
+            --output-dir /tmp/mncs-language-partition-ci
+          jq -e '.cases | length > 0 and all(.[]; .status == "returned" and .expectation_met == true)' \
+            /tmp/mncs-language-partition-ci/result.json
 
   test_render:
-    name: Render/damage tests
+    name: Render and interaction regressions
     runs-on: ubuntu-latest
     timeout-minutes: 30
     needs: validate
@@ -122,7 +160,6 @@ jobs:
       - name: Checkout mncs-tui
         uses: actions/checkout@v4
         with:
-          repository: epi13/mncs-tui
           path: mncs-tui
 
       - name: Checkout mncs-language
@@ -142,31 +179,29 @@ jobs:
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             mncs-language/target
-            mncs-tui/target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Build mncs-cli
         working-directory: mncs-language
         run: cargo build --release -p mncs-cli
 
-      - name: Run render/damage tests
+      - name: Run render and interaction fixtures
         working-directory: mncs-tui
         env:
+          MNCS_CLI: ${{ github.workspace }}/mncs-language/target/release/mncs
           MNCS_LIBRARY_PATH: ${{ github.workspace }}/mncs-language/library:${{ github.workspace }}/mncs-tui/src
         run: |
-          cargo run --manifest-path ../mncs-language/Cargo.toml -p mncs-cli -- experiment run examples/full-demo.mncs --backend mncs-research-bytecode --corpus .github/workflows/corpus/render_damage.json 2>&1 | head -50
+          set -euo pipefail
+          timeout 600s "$MNCS_CLI" execute examples/render-probe.mncs examples/execution/render-probe-request.json > /tmp/mncs-tui-render.json
+          jq -e '.status == "returned" and .returned[0].integer.value == 1' /tmp/mncs-tui-render.json
+          timeout 600s "$MNCS_CLI" execute examples/interaction-probe.mncs examples/execution/interaction-probe-request.json > /tmp/mncs-tui-interaction.json
+          jq -e '.status == "returned" and .returned[0].integer.value == 1' /tmp/mncs-tui-interaction.json
 
   rust_checks:
-    name: Rust fmt/clippy
+    name: mncs-language Rust checks
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
-      - name: Checkout mncs-tui
-        uses: actions/checkout@v4
-        with:
-          repository: epi13/mncs-tui
-          path: mncs-tui
-
       - name: Checkout mncs-language
         uses: actions/checkout@v4
         with:
@@ -179,17 +214,13 @@ jobs:
           components: rustfmt, clippy
 
       - name: Rust fmt check
-        working-directory: mncs-tui
-        run: cargo fmt --check
-
-      - name: Rust fmt check (mncs-language)
         working-directory: mncs-language
-        run: cargo fmt --check
+        run: cargo fmt --all -- --check
 
       - name: Clippy check
-        working-directory: mncs-tui
-        run: cargo clippy -- -D warnings
-
-      - name: Clippy check (mncs-language)
         working-directory: mncs-language
-        run: cargo clippy --workspace -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Rust tests
+        working-directory: mncs-language
+        run: cargo test --workspace

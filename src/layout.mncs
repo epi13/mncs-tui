@@ -1,11 +1,13 @@
 mncs 0.8;
 
-// Constraint-based layout solver for TUI geometry.
-// Bounded, deterministic, total, and evidence-honest.
-
+// Constraint layout over the canonical bounded partition primitive.
+// Fixed/intrinsic demand and grow minima are mandatory. Remaining space is
+// distributed by weight, capped, and redistributed until either all eligible
+// capacity is used or the result explicitly reports leftover space.
 module mncs_tui.layout;
 
 use mncs.core.geometry.v1;
+use mncs.core.partition.v1;
 use mncs_tui.geometry;
 
 enum Axis { HORIZONTAL, VERTICAL }
@@ -14,21 +16,30 @@ enum Sizing { FIXED, INTRINSIC, GROW }
 record Constraint { minimum: i64, maximum: i64, desired: i64, sizing: i64, weight: i64 }
 record RowWidths { w0: i64, w1: i64, w2: i64, w3: i64 }
 record ColumnHeights { h0: i64, h1: i64, h2: i64, h3: i64 }
-record DemoLayout { window: Rect, header: Rect, body: Rect, nav: Rect, main_panel: Rect, status: Rect }
-record RowSolveResult { widths: RowWidths, overflow: bool, needed: i64, allocated: i64 }
-record ColumnSolveResult { heights: ColumnHeights, overflow: bool, needed: i64, allocated: i64 }
+record DemoLayout { window: Rect, header: Rect, body: Rect, nav: Rect, main_panel: Rect, status: Rect, overflow: bool, horizontal_overflow: bool, vertical_overflow: bool }
+record RowSolveResult { widths: RowWidths, overflow: bool, needed: i64, allocated: i64, leftover: i64, valid: bool }
+record ColumnSolveResult { heights: ColumnHeights, overflow: bool, needed: i64, allocated: i64, leftover: i64, valid: bool }
+
+fn layout_nonnegative(value: i64) -> (result: i64) {
+    return select(value < 0, 0, value);
+}
+
+fn constraint_min(cons: Constraint) -> (result: i64) {
+    return layout_nonnegative(cons.minimum);
+}
+
+fn constraint_max(cons: Constraint) -> (result: i64) {
+    let lo: i64 = constraint_min(cons);
+    let hi: i64 = layout_nonnegative(cons.maximum);
+    return select(hi < lo, lo, hi);
+}
 
 fn clamp_desired(cons: Constraint) -> (result: i64) {
-    let d: i64 = cons.desired;
-    let lo: i64 = cons.minimum;
-    let hi: i64 = cons.maximum;
-    if d < lo {
-        return lo;
-    }
-    if d > hi {
-        return hi;
-    }
-    return d;
+    let d: i64 = layout_nonnegative(cons.desired);
+    let lo: i64 = constraint_min(cons);
+    let hi: i64 = constraint_max(cons);
+    let lower: i64 = select(d < lo, lo, d);
+    return select(lower > hi, hi, lower);
 }
 
 fn is_grow(cons: Constraint) -> (result: bool) {
@@ -40,15 +51,21 @@ fn is_fixed_like(cons: Constraint) -> (result: bool) {
 }
 
 fn fixed_width(cons: Constraint) -> (result: i64) {
-    if is_fixed_like(cons) {
-        return clamp_desired(cons);
-    }
-    return 0;
+    return select(is_fixed_like(cons), clamp_desired(cons), 0);
 }
 
 fn grow_min(cons: Constraint) -> (result: i64) {
-    if is_grow(cons) {
-        return cons.minimum;
+    return select(is_grow(cons), constraint_min(cons), 0);
+}
+
+fn grow_capacity(cons: Constraint) -> (result: i64) {
+    let capacity: i64 = constraint_max(cons) -% constraint_min(cons);
+    return select(is_grow(cons) && capacity > 0, capacity, 0);
+}
+
+fn grow_weight(cons: Constraint, capacity: i64) -> (result: i64) {
+    if is_grow(cons) && capacity > 0 && cons.weight > 0 {
+        return cons.weight;
     }
     return 0;
 }
@@ -62,7 +79,7 @@ fn sum_fixed4(ca: Constraint, cb: Constraint, cc: Constraint, cd: Constraint) ->
 }
 
 fn sum_mins4(ca: Constraint, cb: Constraint, cc: Constraint, cd: Constraint) -> (result: i64) {
-    return ca.minimum +% cb.minimum +% cc.minimum +% cd.minimum;
+    return constraint_min(ca) +% constraint_min(cb) +% constraint_min(cc) +% constraint_min(cd);
 }
 
 fn sum_grow_mins4(ca: Constraint, cb: Constraint, cc: Constraint, cd: Constraint) -> (result: i64) {
@@ -70,72 +87,89 @@ fn sum_grow_mins4(ca: Constraint, cb: Constraint, cc: Constraint, cd: Constraint
 }
 
 fn constraint_total_weight4(ca: Constraint, cb: Constraint, cc: Constraint, cd: Constraint) -> (result: i64) {
-    return select(is_grow(ca), ca.weight, 0) +% select(is_grow(cb), cb.weight, 0) +% select(is_grow(cc), cc.weight, 0) +% select(is_grow(cd), cd.weight, 0);
+    return total_weight4(grow_weight(ca, grow_capacity(ca)), grow_weight(cb, grow_capacity(cb)), grow_weight(cc, grow_capacity(cc)), grow_weight(cd, grow_capacity(cd)));
+}
+
+fn cap_share(share: i64, capacity: i64) -> (result: i64) {
+    let bounded_capacity: i64 = layout_nonnegative(capacity);
+    let bounded_share: i64 = layout_nonnegative(share);
+    return select(bounded_share > bounded_capacity, bounded_capacity, bounded_share);
+}
+
+// The upstream primitive owns weighted quotient/remainder arithmetic. This
+// adapter projects that single weighted quota onto caps, then walks the
+// remaining capacity once in lane order. The walk is bounded, deterministic,
+// and conserves every unit that can still fit without reimplementing weights.
+fn distribute_extra4(remaining: i64, ca: Constraint, cb: Constraint, cc: Constraint, cd: Constraint) -> (result: Split4) {
+    let c0: i64 = grow_capacity(ca);
+    let c1: i64 = grow_capacity(cb);
+    let c2: i64 = grow_capacity(cc);
+    let c3: i64 = grow_capacity(cd);
+    let weighted: WeightedSplit = weighted_split4(remaining, grow_weight(ca, c0), grow_weight(cb, c1), grow_weight(cc, c2), grow_weight(cd, c3));
+    if select(weighted.valid, false, true) {
+        return Split4 { v0: 0, v1: 0, v2: 0, v3: 0 };
+    }
+    let a0: i64 = cap_share(weighted.s0, c0);
+    let a1: i64 = cap_share(weighted.s1, c1);
+    let a2: i64 = cap_share(weighted.s2, c2);
+    let a3: i64 = cap_share(weighted.s3, c3);
+    let r0: i64 = remaining -% (a0 +% a1 +% a2 +% a3);
+    let b0: i64 = cap_share(r0, c0 -% a0);
+    let r1: i64 = r0 -% b0;
+    let b1: i64 = cap_share(r1, c1 -% a1);
+    let r2: i64 = r1 -% b1;
+    let b2: i64 = cap_share(r2, c2 -% a2);
+    let r3: i64 = r2 -% b2;
+    let b3: i64 = cap_share(r3, c3 -% a3);
+    return Split4 { v0: a0 +% b0, v1: a1 +% b1, v2: a2 +% b2, v3: a3 +% b3 };
 }
 
 fn solve_widths4_checked(available: i64, ca: Constraint, cb: Constraint, cc: Constraint, cd: Constraint) -> (result: RowSolveResult) {
-    let sum_mins: i64 = ca.minimum +% cb.minimum +% cc.minimum +% cd.minimum;
-    let sum_fixed: i64 = fixed_width(ca) +% fixed_width(cb) +% fixed_width(cc) +% fixed_width(cd);
-    let sum_grow_mins: i64 = grow_min(ca) +% grow_min(cb) +% grow_min(cc) +% grow_min(cd);
-    let avail: i64 = select(available < 0, 0, available);
-    if sum_mins > avail {
-        let widths: RowWidths = RowWidths { w0: ca.minimum, w1: cb.minimum, w2: cc.minimum, w3: cd.minimum };
-        let allocated: i64 = ca.minimum +% cb.minimum +% cc.minimum +% cd.minimum;
-        return RowSolveResult { widths: widths, overflow: true, needed: sum_mins -% avail, allocated: allocated };
+    let avail: i64 = layout_nonnegative(available);
+    let mandatory: i64 = sum_fixed4(ca, cb, cc, cd) +% sum_grow_mins4(ca, cb, cc, cd);
+    let base: RowWidths = RowWidths { w0: fixed_width(ca) +% grow_min(ca), w1: fixed_width(cb) +% grow_min(cb), w2: fixed_width(cc) +% grow_min(cc), w3: fixed_width(cd) +% grow_min(cd) };
+    if mandatory > avail {
+        return RowSolveResult { widths: base, overflow: true, needed: mandatory -% avail, allocated: mandatory, leftover: 0, valid: true };
     }
-    let remaining: i64 = avail -% sum_fixed -% sum_grow_mins;
-    let clamped_remain: i64 = select(remaining < 0, 0, remaining);
-    let grow_count: i64 = select(is_grow(ca), 1, 0) +% select(is_grow(cb), 1, 0) +% select(is_grow(cc), 1, 0) +% select(is_grow(cd), 1, 0);
-    let per: i64 = select(grow_count == 0, 0, clamped_remain / grow_count);
-    let w0: i64 = select(is_grow(ca), ca.minimum +% per, fixed_width(ca));
-    let w0b: i64 = select(w0 < ca.minimum, ca.minimum, select(w0 > ca.maximum, ca.maximum, w0));
-    let w1: i64 = select(is_grow(cb), cb.minimum +% per, fixed_width(cb));
-    let w1b: i64 = select(w1 < cb.minimum, cb.minimum, select(w1 > cb.maximum, cb.maximum, w1));
-    let w2: i64 = select(is_grow(cc), cc.minimum +% per, fixed_width(cc));
-    let w2b: i64 = select(w2 < cc.minimum, cc.minimum, select(w2 > cc.maximum, cc.maximum, w2));
-    let w3: i64 = select(is_grow(cd), cd.minimum +% per, fixed_width(cd));
-    let w3b: i64 = select(w3 < cd.minimum, cd.minimum, select(w3 > cd.maximum, cd.maximum, w3));
-    let widths: RowWidths = RowWidths { w0: w0b, w1: w1b, w2: w2b, w3: w3b };
-    let allocated: i64 = w0b +% w1b +% w2b +% w3b;
-    return RowSolveResult { widths: widths, overflow: false, needed: 0, allocated: allocated };
+    let extra: i64 = avail -% mandatory;
+    let additions: Split4 = distribute_extra4(extra, ca, cb, cc, cd);
+    let widths: RowWidths = RowWidths { w0: base.w0 +% additions.v0, w1: base.w1 +% additions.v1, w2: base.w2 +% additions.v2, w3: base.w3 +% additions.v3 };
+    let allocated: i64 = widths.w0 +% widths.w1 +% widths.w2 +% widths.w3;
+    let eligible0: i64 = grow_weight(ca, grow_capacity(ca));
+    let eligible1: i64 = grow_weight(cb, grow_capacity(cb));
+    let eligible2: i64 = grow_weight(cc, grow_capacity(cc));
+    let eligible3: i64 = grow_weight(cd, grow_capacity(cd));
+    return RowSolveResult { widths: widths, overflow: false, needed: 0, allocated: allocated, leftover: avail -% allocated, valid: weights_fit4(eligible0, eligible1, eligible2, eligible3) };
 }
 
 fn solve_widths4(available: i64, ca: Constraint, cb: Constraint, cc: Constraint, cd: Constraint) -> (result: RowWidths) {
-    let res: RowSolveResult = solve_widths4_checked(available, ca, cb, cc, cd);
-    return res.widths;
+    return solve_widths4_checked(available, ca, cb, cc, cd).widths;
 }
 
 fn solve_heights4_checked(available: i64, ca: Constraint, cb: Constraint, cc: Constraint, cd: Constraint) -> (result: ColumnSolveResult) {
-    let sum_mins: i64 = ca.minimum +% cb.minimum +% cc.minimum +% cd.minimum;
-    let sum_fixed: i64 = fixed_width(ca) +% fixed_width(cb) +% fixed_width(cc) +% fixed_width(cd);
-    let sum_grow_mins: i64 = grow_min(ca) +% grow_min(cb) +% grow_min(cc) +% grow_min(cd);
-    let avail: i64 = select(available < 0, 0, available);
-    if sum_mins > avail {
-        let heights: ColumnHeights = ColumnHeights { h0: ca.minimum, h1: cb.minimum, h2: cc.minimum, h3: cd.minimum };
-        let allocated: i64 = ca.minimum +% cb.minimum +% cc.minimum +% cd.minimum;
-        return ColumnSolveResult { heights: heights, overflow: true, needed: sum_mins -% avail, allocated: allocated };
+    let avail: i64 = layout_nonnegative(available);
+    let mandatory: i64 = sum_fixed4(ca, cb, cc, cd) +% sum_grow_mins4(ca, cb, cc, cd);
+    let base: ColumnHeights = ColumnHeights { h0: fixed_width(ca) +% grow_min(ca), h1: fixed_width(cb) +% grow_min(cb), h2: fixed_width(cc) +% grow_min(cc), h3: fixed_width(cd) +% grow_min(cd) };
+    if mandatory > avail {
+        return ColumnSolveResult { heights: base, overflow: true, needed: mandatory -% avail, allocated: mandatory, leftover: 0, valid: true };
     }
-    let remaining: i64 = avail -% sum_fixed -% sum_grow_mins;
-    let clamped_remain: i64 = select(remaining < 0, 0, remaining);
-    let grow_count: i64 = select(is_grow(ca), 1, 0) +% select(is_grow(cb), 1, 0) +% select(is_grow(cc), 1, 0) +% select(is_grow(cd), 1, 0);
-    let per: i64 = select(grow_count == 0, 0, clamped_remain / grow_count);
-    let h0: i64 = select(is_grow(ca), ca.minimum +% per, fixed_width(ca));
-    let h0b: i64 = select(h0 < ca.minimum, ca.minimum, select(h0 > ca.maximum, ca.maximum, h0));
-    let h1: i64 = select(is_grow(cb), cb.minimum +% per, fixed_width(cb));
-    let h1b: i64 = select(h1 < cb.minimum, cb.minimum, select(h1 > cb.maximum, cb.maximum, h1));
-    let h2: i64 = select(is_grow(cc), cc.minimum +% per, fixed_width(cc));
-    let h2b: i64 = select(h2 < cc.minimum, cc.minimum, select(h2 > cc.maximum, cc.maximum, h2));
-    let h3: i64 = select(is_grow(cd), cd.minimum +% per, fixed_width(cd));
-    let h3b: i64 = select(h3 < cd.minimum, cd.minimum, select(h3 > cd.maximum, cd.maximum, h3));
-    let heights: ColumnHeights = ColumnHeights { h0: h0b, h1: h1b, h2: h2b, h3: h3b };
-    let allocated: i64 = h0b +% h1b +% h2b +% h3b;
-    return ColumnSolveResult { heights: heights, overflow: false, needed: 0, allocated: allocated };
+    let extra: i64 = avail -% mandatory;
+    let additions: Split4 = distribute_extra4(extra, ca, cb, cc, cd);
+    let heights: ColumnHeights = ColumnHeights { h0: base.h0 +% additions.v0, h1: base.h1 +% additions.v1, h2: base.h2 +% additions.v2, h3: base.h3 +% additions.v3 };
+    let allocated: i64 = heights.h0 +% heights.h1 +% heights.h2 +% heights.h3;
+    let eligible0: i64 = grow_weight(ca, grow_capacity(ca));
+    let eligible1: i64 = grow_weight(cb, grow_capacity(cb));
+    let eligible2: i64 = grow_weight(cc, grow_capacity(cc));
+    let eligible3: i64 = grow_weight(cd, grow_capacity(cd));
+    return ColumnSolveResult { heights: heights, overflow: false, needed: 0, allocated: allocated, leftover: avail -% allocated, valid: weights_fit4(eligible0, eligible1, eligible2, eligible3) };
 }
 
 fn solve_heights4(available: i64, ca: Constraint, cb: Constraint, cc: Constraint, cd: Constraint) -> (result: ColumnHeights) {
-    let res: ColumnSolveResult = solve_heights4_checked(available, ca, cb, cc, cd);
-    return res.heights;
+    return solve_heights4_checked(available, ca, cb, cc, cd).heights;
 }
+
+record RowRects { r0: Rect, r1: Rect, r2: Rect, r3: Rect }
+record ColumnRects { r0: Rect, r1: Rect, r2: Rect, r3: Rect }
 
 fn place_row(parent: Rect, widths: RowWidths) -> (result: RowRects) {
     let x0: i64 = parent.origin.column;
@@ -151,8 +185,6 @@ fn place_row(parent: Rect, widths: RowWidths) -> (result: RowRects) {
     return RowRects { r0: r0, r1: r1, r2: r2, r3: r3 };
 }
 
-record RowRects { r0: Rect, r1: Rect, r2: Rect, r3: Rect }
-
 fn place_column(parent: Rect, heights: ColumnHeights) -> (result: ColumnRects) {
     let x: i64 = parent.origin.column;
     let y0: i64 = parent.origin.row;
@@ -167,38 +199,33 @@ fn place_column(parent: Rect, heights: ColumnHeights) -> (result: ColumnRects) {
     return ColumnRects { r0: r0, r1: r1, r2: r2, r3: r3 };
 }
 
-record ColumnRects { r0: Rect, r1: Rect, r2: Rect, r3: Rect }
-
 fn make_fixed(size: i64) -> (result: Constraint) {
-    return Constraint { minimum: size, maximum: size, desired: size, sizing: 0, weight: 0 };
+    let value: i64 = layout_nonnegative(size);
+    return Constraint { minimum: value, maximum: value, desired: value, sizing: 0, weight: 0 };
 }
 
 fn make_grow(lo: i64, hi: i64) -> (result: Constraint) {
-    return Constraint { minimum: lo, maximum: hi, desired: 0, sizing: 2, weight: 1 };
+    return make_grow_weighted(lo, hi, 1);
 }
 
 fn make_grow_weighted(lo: i64, hi: i64, weight: i64) -> (result: Constraint) {
-    return Constraint { minimum: lo, maximum: hi, desired: 0, sizing: 2, weight: weight };
+    return Constraint { minimum: layout_nonnegative(lo), maximum: layout_nonnegative(hi), desired: 0, sizing: 2, weight: weight };
 }
 
 fn make_intrinsic(desired: i64, lo: i64, hi: i64) -> (result: Constraint) {
-    return Constraint { minimum: lo, maximum: hi, desired: desired, sizing: 1, weight: 0 };
+    return Constraint { minimum: layout_nonnegative(lo), maximum: layout_nonnegative(hi), desired: layout_nonnegative(desired), sizing: 1, weight: 0 };
 }
 
 fn demo_layout(terminal: Size) -> (result: DemoLayout) {
-    let window: Rect = Rect { origin: Point { column: 0, row: 0 }, size: terminal };
-    let header: Rect = Rect { origin: Point { column: 0, row: 0 }, size: Size { columns: terminal.columns, rows: 3 } };
-    let body_h: i64 = terminal.rows -% 4;
-    let body_hc: i64 = select(body_h < 0, 0, body_h);
-    let body: Rect = Rect { origin: Point { column: 0, row: 3 }, size: Size { columns: terminal.columns, rows: body_hc } };
-    let status: Rect = Rect { origin: Point { column: 0, row: 3 +% body_hc }, size: Size { columns: terminal.columns, rows: 1 } };
-    let nav_w: i64 = select(terminal.columns < 24, select(terminal.columns < 12, terminal.columns, 12), 24);
-    let nav_wc: i64 = select(nav_w > body.size.columns, body.size.columns, nav_w);
-    let main_w: i64 = body.size.columns -% nav_wc;
-    let main_wc: i64 = select(main_w < 0, 0, main_w);
-    let nav: Rect = Rect { origin: body.origin, size: Size { columns: nav_wc, rows: body.size.rows } };
-    let main_panel: Rect = Rect { origin: Point { column: body.origin.column +% nav_wc, row: body.origin.row }, size: Size { columns: main_wc, rows: body.size.rows } };
-    return DemoLayout { window: window, header: header, body: body, nav: nav, main_panel: main_panel, status: status };
+    let window: Rect = Rect { origin: Point { column: 0, row: 0 }, size: Size { columns: layout_nonnegative(terminal.columns), rows: layout_nonnegative(terminal.rows) } };
+    let vertical: ColumnSolveResult = solve_heights4_checked(terminal.rows, make_fixed(3), make_grow(0, layout_nonnegative(terminal.rows)), make_fixed(1), make_fixed(0));
+    let raw_header: Rect = Rect { origin: Point { column: 0, row: 0 }, size: Size { columns: window.size.columns, rows: vertical.heights.h0 } };
+    let raw_body: Rect = Rect { origin: Point { column: 0, row: vertical.heights.h0 }, size: Size { columns: window.size.columns, rows: vertical.heights.h1 } };
+    let raw_status: Rect = Rect { origin: Point { column: 0, row: vertical.heights.h0 +% vertical.heights.h1 }, size: Size { columns: window.size.columns, rows: vertical.heights.h2 } };
+    let horizontal: RowSolveResult = solve_widths4_checked(window.size.columns, make_intrinsic(24, 0, 40), make_grow(0, window.size.columns), make_fixed(0), make_fixed(0));
+    let raw_nav: Rect = Rect { origin: raw_body.origin, size: Size { columns: horizontal.widths.w0, rows: raw_body.size.rows } };
+    let raw_main: Rect = Rect { origin: Point { column: raw_body.origin.column +% horizontal.widths.w0, row: raw_body.origin.row }, size: Size { columns: horizontal.widths.w1, rows: raw_body.size.rows } };
+    return DemoLayout { window: window, header: rect_clip(raw_header, window), body: rect_clip(raw_body, window), nav: rect_clip(raw_nav, window), main_panel: rect_clip(raw_main, window), status: rect_clip(raw_status, window), overflow: horizontal.overflow || vertical.overflow, horizontal_overflow: horizontal.overflow, vertical_overflow: vertical.overflow };
 }
 
 fn demo_layout_narrow(terminal: Size) -> (result: DemoLayout) {
@@ -206,16 +233,13 @@ fn demo_layout_narrow(terminal: Size) -> (result: DemoLayout) {
 }
 
 fn apply_padding(rect: Rect, pad: i64) -> (result: Rect) {
-    let insets: Insets = insets_uniform(pad);
-    return rect_apply_insets(rect, insets);
+    return rect_apply_insets(rect, insets_uniform(layout_nonnegative(pad)));
 }
 
 fn layout_contains_all(demo: DemoLayout) -> (result: bool) {
-    let window_ok: bool = rect_contains_rect(demo.window, demo.header) && rect_contains_rect(demo.window, demo.status);
-    let body_ok: bool = rect_contains_rect(demo.window, demo.body);
-    let nav_ok: bool = rect_contains_rect(demo.body, demo.nav);
-    let main_ok: bool = rect_contains_rect(demo.body, demo.main_panel);
-    return window_ok && body_ok && nav_ok && main_ok;
+    let window_ok: bool = rect_contains_rect(demo.window, demo.header) && rect_contains_rect(demo.window, demo.body) && rect_contains_rect(demo.window, demo.status);
+    let body_ok: bool = rect_contains_rect(demo.body, demo.nav) && rect_contains_rect(demo.body, demo.main_panel);
+    return select(demo.overflow, false, window_ok && body_ok);
 }
 
 fn status_height_is_one(demo: DemoLayout) -> (result: bool) {
@@ -227,7 +251,7 @@ fn header_height_is_three(demo: DemoLayout) -> (result: bool) {
 }
 
 fn nav_width_bounded(demo: DemoLayout) -> (result: bool) {
-    return (demo.nav.size.columns >= 12) && (demo.nav.size.columns <= 40);
+    return demo.nav.size.columns >= 0 && demo.nav.size.columns <= 40;
 }
 
 fn widths_sum(widths: RowWidths) -> (result: i64) {

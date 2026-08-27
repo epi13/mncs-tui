@@ -13,11 +13,12 @@ The roadmap is a research sequence. “Scaffolded” means vocabulary and bounda
 
 ## Phase 1 — Geometry and layout corpus
 
-**Status: experimental — exercised via `mncs.core.geometry.v1` and `mncs_tui.layout`.**
+**Status: experimental — exercised via `mncs.core.geometry.v1`, `mncs.core.partition.v1`, and `mncs_tui.layout`.**
 
 - `library/core/geometry.mncs` provides total Point/Size/Rect/Insets with containment, intersection, union, clipping, and `select` branchless helpers (Profile 0.8, validated).
 - `src/geometry.mncs` adds hit-regions, viewports, anchors (`mncs.core.geometry.v1` + bounded `[HitRegion;4]` traversals).
-- `src/layout.mncs` implements a bounded one-dimensional solver for 4 constraints (fixed/intrinsic/grow, min/max, deterministic remainder) and composes into `DemoLayout` (`header 3/body grow/status 1`, `nav 24/main grow`). Wrapping arithmetic (`+%`) and `select` keep it total.
+- `mncs.core.partition.v1` owns exact weighted quotient/remainder arithmetic, including overflow-safe large products and deterministic remainder assignment.
+- `src/layout.mncs` implements a bounded one-dimensional solver for 4 constraints (fixed/intrinsic/grow, min/max, deterministic remainder) and composes into `DemoLayout` (`header 3/body grow/status 1`, `nav 24/main grow`). Conflicting fixed/grow minima report overflow instead of being silently accepted.
 
 ## Phase 2 — Structured frame and diff model
 
@@ -29,10 +30,10 @@ The roadmap is a research sequence. “Scaffolded” means vocabulary and bounda
 
 ## Phase 3 — Event and lifecycle boundary
 
-**Status: experimental — exercised via `src/events.mncs` + `src/focus.mncs` + `src/terminal.mncs`.**
+**Status: experimental — exercised via `mncs.std.ansi.v1` + `src/events.mncs` + `src/focus.mncs` + `src/terminal.mncs`.**
 
 - `KeyEvent`/`MouseEvent`/`Resize`/`Paste`/`Focus`/`Quit`/`Unknown` payload sums (Profile 0.6) with `Unknown` preservation (evidence-honest).
-- `normalize_key`/`normalize_mouse` map raw `i64` codes to typed events; malformed stays `Unknown`.
+- `mncs.std.ansi.v1` parses bounded ANSI/VT sequences into generic `AnsiEvent` values; `src/events.mncs` maps those values into TUI events and preserves `Unknown`.
 - `dispatch_*` respects focus and hit-testing (`HitRegion` from `src/geometry.mncs`) and returns `DispatchResult { consumed, new_focus, damage }`.
 - `src/terminal.mncs` is a pure state machine (`terminal_init`/`enter_alt`/`resize`/`cleanup`) with `generation` and `damage_to_commands`.
 
@@ -46,11 +47,13 @@ The roadmap is a research sequence. “Scaffolded” means vocabulary and bounda
 
 ## Phase 5 — Terminal realization
 
-**Status: experimental — narrow adapter in `src/terminal.mncs`.**
+**Status: experimental — pure projection adapter in `src/terminal.mncs`.**
 
 - Pure `TerminalState` with `alt`/`cursor_visible`/`initialized`/`generation`.
-- `damage_to_commands` / `frame_to_commands` map `Damage`+`Frame` to at most four `TerminalCommand` (`CLEAR`/`CURSOR_MOVE`/`WRITE_CELL`/`STYLE_SET`).
+- `damage_to_commands` maps `Damage`+`Frame` to bounded `TerminalCommand` values, explicitly clearing disappeared cells and forcing a clear-prefix full redraw after resize.
 - Cleanup is deterministic (`terminal_cleanup` restores alt and cursor).
+
+The current research-bytecode backend still exhausts a bounded execution budget on the minimized `examples/backend-repro.mncs` import path. CI records that fact as a regression while the semantic body request returns the expected allocation. This is an upstream backend/performance issue, not a reason to weaken the layout assertion.
 
 ## Phase 6 — Language and service integration
 

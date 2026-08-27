@@ -1,0 +1,37 @@
+mncs 0.8;
+
+module examples.render_probe;
+
+use mncs.core.geometry.v1;
+use mncs_tui.render;
+use mncs_tui.terminal;
+
+fn empty() -> (result: Cell) {
+    return Cell { column: 0, row: 0, glyph: 0, style: 0 };
+}
+
+fn render_damage_and_projection() -> (result: i64) {
+    let old_cell: Cell = Cell { column: 1, row: 1, glyph: 65, style: 1 };
+    let new_cell: Cell = Cell { column: 2, row: 1, glyph: 65, style: 2 };
+    let old_frame: Frame = Frame { width: 10, height: 5, first: old_cell, second: empty(), third: empty(), fourth: empty() };
+    let new_frame: Frame = Frame { width: 10, height: 5, first: new_cell, second: empty(), third: empty(), fourth: empty() };
+    let damage: Damage = frame_damage(old_frame, new_frame);
+    let commands: FrameCommands = damage_to_commands(old_frame, new_frame);
+    return select(damage.x == 1 && damage.w == 2 && commands_count(commands) == 3 && commands_cell_count(commands) == 2 && command_is_clear_cell(commands.first) && command_is_write(commands.second), 1, 0);
+}
+
+fn render_resize_is_full_redraw() -> (result: i64) {
+    let cell: Cell = Cell { column: 2, row: 2, glyph: 65, style: 1 };
+    let old_frame: Frame = Frame { width: 10, height: 5, first: cell, second: empty(), third: empty(), fourth: empty() };
+    let new_frame: Frame = Frame { width: 20, height: 5, first: cell, second: empty(), third: empty(), fourth: empty() };
+    let commands: FrameCommands = damage_to_commands(old_frame, new_frame);
+    return select(commands_is_full_redraw(commands) && commands_count(commands) == 3, 1, 0);
+}
+
+fn render_disappearance_clears_old_cell() -> (result: i64) {
+    let old_cell: Cell = Cell { column: 0, row: 0, glyph: 65, style: 1 };
+    let old_frame: Frame = Frame { width: 10, height: 5, first: old_cell, second: empty(), third: empty(), fourth: empty() };
+    let new_frame: Frame = Frame { width: 10, height: 5, first: empty(), second: empty(), third: empty(), fourth: empty() };
+    let commands: FrameCommands = damage_to_commands(old_frame, new_frame);
+    return select(commands_count(commands) == 2 && command_is_clear_cell(commands.first), 1, 0);
+}

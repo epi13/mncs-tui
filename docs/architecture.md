@@ -56,7 +56,7 @@ Widgets are semantic nodes, not only render callbacks. A node has an identity, p
 
 ### Events
 
-The event boundary normalizes terminal input into typed events: keys, mouse actions, paste, resize, focus, and lifecycle events. Raw bytes and terminal escape sequences belong to the adapter boundary. Applications should observe events with explicit source, timing, and capability assumptions where those facts matter.
+The event boundary normalizes terminal input into typed events: keys, mouse actions, paste, resize, focus, and lifecycle events. `mncs.std.ansi.v1` owns the generic meaning of bounded ANSI/VT sequences; `mncs_tui.events` maps those values into TUI-specific events. Raw host bytes, capability probing, and transport remain outside this repository. Applications should observe events with explicit source, timing, and capability assumptions where those facts matter.
 
 Event handling is a state transition. It should expose handled/unhandled outcomes, follow-up effects, focus changes, invalidated regions, and cleanup obligations rather than hiding them in a callback convention.
 
@@ -71,11 +71,12 @@ The terminal projection is deliberately last. It is responsible for capability-s
 ```text
 mncs-tui
   owns framework vocabulary, composition, layout policy, frame/diff policy,
-  terminal adapters, and TUI-specific contracts
+  terminal command planning, and TUI-specific contracts
 
 mncs-language
   owns syntax, type/contract/effect semantics, identities, verification,
-  compiler/lowering, and backend contracts
+  compiler/lowering, backend contracts, weighted partition primitives,
+  and generic ANSI/VT event parsing
 
 mncs-language-service
   owns resident workspace analysis, diagnostics, navigation, context, and
@@ -100,7 +101,7 @@ The intended update cycle is:
 6. project the diff through the terminal adapter;
 7. commit the new frame only when the projection boundary reports its result.
 
-Terminal mode changes, input reads, output writes, timers, and resize observation are effects. Their authority, failure behavior, and cleanup obligations should remain visible to the language and its service rather than being implicit global state.
+Terminal mode changes, input reads, output writes, timers, and resize observation are effects. Their authority, failure behavior, and cleanup obligations should remain visible to the language and its service rather than being implicit global state. The current `src/terminal.mncs` layer plans bounded commands and models lifecycle pairing; it does not claim to perform host I/O.
 
 ## Verification pressure
 
