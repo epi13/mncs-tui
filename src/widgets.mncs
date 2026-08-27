@@ -118,17 +118,18 @@ fn tree_child(tree: WidgetTree, idx: i64) -> (result: Widget) {
 }
 
 fn tree_contains(tree: WidgetTree, point: Point) -> (result: i64) {
+    // Deepest/topmost child first, root last. Point must be inside root clip.
     if widget_contains_point(tree.root, point) {
+        if widget_contains_point(tree.third, point) {
+            return tree.third.id.value;
+        }
+        if widget_contains_point(tree.second, point) {
+            return tree.second.id.value;
+        }
+        if widget_contains_point(tree.first, point) {
+            return tree.first.id.value;
+        }
         return tree.root.id.value;
-    }
-    if widget_contains_point(tree.first, point) {
-        return tree.first.id.value;
-    }
-    if widget_contains_point(tree.second, point) {
-        return tree.second.id.value;
-    }
-    if widget_contains_point(tree.third, point) {
-        return tree.third.id.value;
     }
     return 0 - 1;
 }
