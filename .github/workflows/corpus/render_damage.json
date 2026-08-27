@@ -1,0 +1,18 @@
+{
+  "schema_version": "0.2",
+  "name": "render_damage",
+  "cases": [
+    {
+      "id": "demo-80-24",
+      "request": {
+        "schema_version": "0.1",
+        "target": { "module": "examples.full_demo", "function": "demo_80_24" },
+        "arguments": [],
+        "step_budget": 100000
+      },
+      "expected_status": "returned",
+      "expected": [{ "integer": { "value": 1, "type": { "bits": 64, "signed": true } } }]
+    }
+  ],
+  "properties": []
+}
