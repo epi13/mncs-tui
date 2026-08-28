@@ -138,12 +138,13 @@ fn union_bounds(a: Rect, b: Rect) -> (result: Rect) {
     return rect_union(a, b);
 }
 
-// Hit-test over a bounded window of four regions using deterministic traversal.
+// Hit-test over a bounded window of regions. The sequence form is the
+// language-level type; the four-argument wrappers exist for existing
+// scalar call sites and pack into `[HitRegion; 4]`.
 
-fn hit_test4(p: Point, r0: HitRegion, r1: HitRegion, r2: HitRegion, r3: HitRegion) -> (result: i64) {
-    let hs: [HitRegion; 4] = [r0, r1, r2, r3];
-    iterate i over hs carrying hit: i64 = 0 - 1 {
-        let candidate: HitRegion = hs[i];
+fn hit_test_regions(p: Point, regions: [HitRegion; 4]) -> (result: i64) {
+    iterate i over regions carrying hit: i64 = 0 - 1 {
+        let candidate: HitRegion = regions[i];
         let matches: bool = hit_contains(candidate, p);
         let chosen: i64 = select(matches && hit == 0 - 1, candidate.widget_id, hit);
         next hit = chosen;
@@ -151,20 +152,30 @@ fn hit_test4(p: Point, r0: HitRegion, r1: HitRegion, r2: HitRegion, r3: HitRegio
     return hit;
 }
 
-fn first_visible4(r0: HitRegion, r1: HitRegion, r2: HitRegion, r3: HitRegion) -> (result: i64) {
-    let hs: [HitRegion; 4] = [r0, r1, r2, r3];
-    iterate i over hs carrying found: i64 = 0 - 1 {
-        let c: HitRegion = hs[i];
+fn first_visible_regions(regions: [HitRegion; 4]) -> (result: i64) {
+    iterate i over regions carrying found: i64 = 0 - 1 {
+        let c: HitRegion = regions[i];
         let choose: bool = c.visible && found == 0 - 1;
         next found = select(choose, c.widget_id, found);
     }
     return found;
 }
 
-fn count_visible4(r0: HitRegion, r1: HitRegion, r2: HitRegion, r3: HitRegion) -> (result: i64) {
-    let hs: [HitRegion; 4] = [r0, r1, r2, r3];
-    iterate i over hs carrying acc: i64 = 0 {
-        next acc = acc +% select(hs[i].visible, 1, 0);
+fn count_visible_regions(regions: [HitRegion; 4]) -> (result: i64) {
+    iterate i over regions carrying acc: i64 = 0 {
+        next acc = acc +% select(regions[i].visible, 1, 0);
     }
     return acc;
+}
+
+fn hit_test4(p: Point, r0: HitRegion, r1: HitRegion, r2: HitRegion, r3: HitRegion) -> (result: i64) {
+    return hit_test_regions(p, [r0, r1, r2, r3]);
+}
+
+fn first_visible4(r0: HitRegion, r1: HitRegion, r2: HitRegion, r3: HitRegion) -> (result: i64) {
+    return first_visible_regions([r0, r1, r2, r3]);
+}
+
+fn count_visible4(r0: HitRegion, r1: HitRegion, r2: HitRegion, r3: HitRegion) -> (result: i64) {
+    return count_visible_regions([r0, r1, r2, r3]);
 }

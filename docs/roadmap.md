@@ -16,7 +16,7 @@ The roadmap is a research sequence. “Scaffolded” means vocabulary and bounda
 **Status: experimental — exercised via `mncs.core.geometry.v1`, `mncs.core.partition.v1`, and `mncs_tui.layout`.**
 
 - `library/core/geometry.mncs` provides total Point/Size/Rect/Insets with containment, intersection, union, clipping, and `select` branchless helpers (Profile 0.8, validated).
-- `src/geometry.mncs` adds hit-regions, viewports, anchors (`mncs.core.geometry.v1` + bounded `[HitRegion;4]` traversals).
+- `src/geometry.mncs` adds hit-regions, viewports, anchors (`mncs.core.geometry.v1` + bounded `[HitRegion; 4]` sequence-typed hit-test/visibility helpers, with four-argument wrappers for existing call sites).
 - `mncs.core.partition.v1` owns exact weighted quotient/remainder arithmetic, including overflow-safe large products and deterministic remainder assignment.
 - `src/layout.mncs` implements a bounded one-dimensional solver for 4 constraints (fixed/intrinsic/grow, min/max, deterministic remainder) and composes into `DemoLayout` (`header 3/body grow/status 1`, `nav 24/main grow`). Conflicting fixed/grow minima report overflow instead of being silently accepted.
 
