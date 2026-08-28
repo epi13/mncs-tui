@@ -102,29 +102,19 @@ fn rect_in_bounds(r: Rect, limit: Rect) -> (result: bool) {
     return rect_contains_rect(limit, r);
 }
 
-// Anchor helpers: describe alignment within a container.
+// Anchor helpers consume `mncs.core.geometry.v1` alignment rather than
+// restating leftover-space arithmetic locally. 0 = start, 1 = center, 2 = end.
 
 fn anchor_center(parent: Rect, child: Size) -> (result: Point) {
-    if size_is_empty(child) {
-        return parent.origin;
-    }
-    let dx: i64 = (parent.size.columns -% child.columns) / 2;
-    let dy: i64 = (parent.size.rows -% child.rows) / 2;
-    let cx: i64 = select(dx < 0, 0, dx);
-    let cy: i64 = select(dy < 0, 0, dy);
-    return Point { column: parent.origin.column +% cx, row: parent.origin.row +% cy };
+    return point_anchor(parent, child, 1, 1);
 }
 
 fn anchor_right(parent: Rect, child: Size) -> (result: Point) {
-    let dx: i64 = parent.size.columns -% child.columns;
-    let cx: i64 = select(dx < 0, 0, dx);
-    return Point { column: parent.origin.column +% cx, row: parent.origin.row };
+    return point_anchor(parent, child, 2, 0);
 }
 
 fn anchor_bottom(parent: Rect, child: Size) -> (result: Point) {
-    let dy: i64 = parent.size.rows -% child.rows;
-    let cy: i64 = select(dy < 0, 0, dy);
-    return Point { column: parent.origin.column, row: parent.origin.row +% cy };
+    return point_anchor(parent, child, 0, 2);
 }
 
 // Insets/padding application that preserves typed geometry.
