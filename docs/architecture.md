@@ -82,9 +82,9 @@ mncs-language-service
   owns resident workspace analysis, diagnostics, navigation, context, and
   editor/agent protocol adaptation
 
-terminal adapter / host
-  owns OS-specific input and output transport, terminal capability probing,
-  and resource acquisition at the external boundary
+mncs-tui-host
+  owns Unix-specific input and output transport, terminal capability probing,
+  and resource acquisition at the external boundary; applications provide semantic frames
 ```
 
 The framework may define TUI-specific concepts, but it should not reimplement language validation, evidence, authority, or source identity. If a concept cannot be expressed safely in MNCS, record that as upstream language pressure.
@@ -101,7 +101,7 @@ The intended update cycle is:
 6. project the diff through the terminal adapter;
 7. commit the new frame only when the projection boundary reports its result.
 
-Terminal mode changes, input reads, output writes, timers, and resize observation are effects. Their authority, failure behavior, and cleanup obligations should remain visible to the language and its service rather than being implicit global state. The current `src/terminal.mncs` layer plans bounded commands and models lifecycle pairing; it does not claim to perform host I/O.
+Terminal mode changes, input reads, output writes, timers, and resize observation are effects. Their authority, failure behavior, and cleanup obligations should remain visible to the language and its service rather than being implicit global state. The `src/terminal.mncs` layer plans bounded commands and models lifecycle pairing; the `mncs-tui-host` member performs the Unix host realization for structured frames.
 
 ## Verification pressure
 
