@@ -47,11 +47,13 @@ The roadmap is a research sequence. “Scaffolded” means vocabulary and bounda
 
 ## Phase 5 — Terminal realization
 
-**Status: experimental — pure projection adapter in `src/terminal.mncs`.**
+**Status: experimental — exercised by the `mncs-tui-host` Unix realization.**
 
 - Pure `TerminalState` with `alt`/`cursor_visible`/`initialized`/`generation`.
 - `damage_to_commands` maps `Damage`+`Frame` to bounded `TerminalCommand` values, explicitly clearing disappeared cells and forcing a clear-prefix full redraw after resize.
 - Cleanup is deterministic (`terminal_cleanup` restores alt and cursor).
+- `mncs-tui-host` acquires raw mode and alternate-screen state, decodes bounded key/resize input,
+  writes structured frame damage, and restores terminal state on drop.
 
 The current research-bytecode backend still exhausts a bounded execution budget on the minimized `examples/backend-repro.mncs` import path. CI records that fact as a regression while the semantic body request returns the expected allocation. This is an upstream backend/performance issue, not a reason to weaken the layout assertion.
 
@@ -66,7 +68,7 @@ The current research-bytecode backend still exhausts a bounded execution budget 
 
 ## Explicit non-goals
 
-The project will not freeze a final widget API, claim universal terminal portability, or create a second semantic authority while the language and service are still evolving. Distributed rendering, unrestricted concurrency, and automatic visual correctness claims are also out of scope for the bootstrap.
+The project will not freeze a final widget API, claim universal terminal portability, or create a second semantic authority while the language and service are still evolving. Distributed rendering, unrestricted concurrency, and automatic visual correctness claims are also out of scope for the bootstrap. The host member currently targets Unix-like terminals and does not promise Windows or full terminal capability coverage.
 
 ## Acceptance vocabulary
 

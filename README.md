@@ -2,7 +2,7 @@
 
 Machine-native terminal UI framework for MNCS, built around first-class geometry, constraint-based layout, structured rendering, and efficient terminal interaction.
 
-> **Status: experimental semantic vertical slice.** `mncs-tui` has validated MNCS source for typed geometry, bounded constraint solving, structured cells/frames, damage projection, generic events, composable widgets, focus, hit-testing, and terminal command planning. The integrated demo `examples/full-demo.mncs` exercises those relationships, but this repository does not yet provide host terminal I/O or claim a production-ready runtime. APIs remain experimental and not yet stable.
+> **Status: experimental semantic vertical slice.** `mncs-tui` has validated MNCS source for typed geometry, bounded constraint solving, structured cells/frames, damage projection, generic events, composable widgets, focus, hit-testing, terminal command planning, and bounded chart primitives. Its `mncs-tui-host` workspace member provides a reusable Unix realization for raw mode, alternate-screen lifecycle, input, resize, structured-frame diff writes, and cleanup. APIs remain experimental and not yet stable.
 
 ## Why this project exists
 
@@ -64,7 +64,8 @@ docs/
 The `host/` workspace member is the reusable Unix terminal realization. It owns raw mode,
 alternate-screen lifecycle, input decoding, resize observation, and diffed writes for structured
 frames; applications still own their semantic state and use the MNCS framework vocabulary for
-layout, widgets, focus, and bounded charts.
+layout, widgets, focus, and bounded charts. It is deliberately a host boundary rather than a
+second application framework, and is not yet a cross-platform terminal backend.
 
 ## The target model
 
