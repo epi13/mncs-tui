@@ -44,6 +44,10 @@ jobs:
         working-directory: mncs-language
         run: cargo build --release -p mncs-cli
 
+      - name: Test reusable terminal host realization
+        working-directory: mncs-tui
+        run: cargo test --workspace
+
       - name: Validate source and examples
         working-directory: mncs-tui
         env:
@@ -60,7 +64,8 @@ jobs:
             examples/focused-tests.mncs \
             examples/render-probe.mncs \
             examples/interaction-probe.mncs \
-            examples/backend-repro.mncs; do
+            examples/backend-repro.mncs \
+            examples/charts-probe.mncs; do
             "$MNCS_CLI" validate "$source"
           done
           if grep -En 'return true|= true;[[:space:]]*//|avoid hang|skip.*hang' examples/full-demo.mncs; then

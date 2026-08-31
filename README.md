@@ -47,6 +47,7 @@ src/
   widgets.mncs      container/text/list/table/status with intrinsic sizing and focus
   focus.mncs        focus identity, traversal, hit-testing, and event dispatch
   terminal.mncs     lifecycle, alt-screen, cursor, style, and damage→commands
+  charts.mncs       bounded sparkline levels and glyph semantics
 examples/
   first-layout.mncs small rectangle fixture (bootstrap)
   full-demo.mncs    integrated demo exercising layout→render→diff→focus→terminal
@@ -59,6 +60,11 @@ docs/
 ```
 
 `src/` modules are now substantial MNCS implementations (Profile 0.8, bounded data, `select`/`vec`/`mask`). The upstream `mncs.core.geometry.v1` (in `mncs-language/library/core/geometry.mncs`) is the canonical primitive store; `mncs.core.partition.v1` owns weighted integer allocation; and `mncs.std.ansi.v1` owns ANSI/VT sequence meaning. `mncs_tui.geometry`, `mncs_tui.layout`, and `mncs_tui.events` adapt those authorities with TUI-specific contracts rather than duplicating them.
+
+The `host/` workspace member is the reusable Unix terminal realization. It owns raw mode,
+alternate-screen lifecycle, input decoding, resize observation, and diffed writes for structured
+frames; applications still own their semantic state and use the MNCS framework vocabulary for
+layout, widgets, focus, and bounded charts.
 
 ## The target model
 

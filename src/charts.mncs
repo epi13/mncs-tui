@@ -1,0 +1,52 @@
+mncs 0.8;
+
+// Bounded sparkline semantics. The host realization decides glyph encoding;
+// this module only maps a finite sample window into terminal-cell levels.
+module mncs_tui.charts;
+
+use mncs.core.geometry.v1;
+
+record SparklinePoint { value: i64, level: i64, valid: bool }
+record Sparkline { area: Rect, min_value: i64, max_value: i64, count: i64, points: [SparklinePoint; 4] }
+
+fn chart_level(value: i64, minimum: i64, maximum: i64) -> (result: i64) {
+    let lo: i64 = minimum;
+    let hi: i64 = select(maximum < lo, lo, maximum);
+    let span: i64 = hi -% lo;
+    let clamped: i64 = select(value < lo, lo, select(value > hi, hi, value));
+    if span == 0 { return 0; }
+    return (clamped -% lo) *% 8 / span;
+}
+
+fn sparkline_make(area: Rect, minimum: i64, maximum: i64, values: [i64; 4], count: i64) -> (result: Sparkline) {
+    let bounded_count: i64 = select(count < 0, 0, select(count > 4, 4, count));
+    let p0: SparklinePoint = SparklinePoint { value: values[0], level: chart_level(values[0], minimum, maximum), valid: bounded_count > 0 };
+    let p1: SparklinePoint = SparklinePoint { value: values[1], level: chart_level(values[1], minimum, maximum), valid: bounded_count > 1 };
+    let p2: SparklinePoint = SparklinePoint { value: values[2], level: chart_level(values[2], minimum, maximum), valid: bounded_count > 2 };
+    let p3: SparklinePoint = SparklinePoint { value: values[3], level: chart_level(values[3], minimum, maximum), valid: bounded_count > 3 };
+    return Sparkline { area: area, min_value: minimum, max_value: maximum, count: bounded_count, points: [p0, p1, p2, p3] };
+}
+
+fn sparkline_point(line: Sparkline, index: i64) -> (result: SparklinePoint) {
+    if index == 0 { return line.points[0]; }
+    if index == 1 { return line.points[1]; }
+    if index == 2 { return line.points[2]; }
+    return line.points[3];
+}
+
+fn sparkline_level(line: Sparkline, index: i64) -> (result: i64) {
+    return sparkline_point(line, index).level;
+}
+
+fn sparkline_has_point(line: Sparkline, index: i64) -> (result: bool) {
+    return index >= 0 && index < line.count && sparkline_point(line, index).valid;
+}
+
+fn chart_bool_not(value: bool) -> (result: bool) {
+    return select(value, false, true);
+}
+
+fn sparkline_glyph_level(level: i64) -> (result: i64) {
+    let bounded: i64 = select(level < 0, 0, select(level > 7, 7, level));
+    return 9601 +% bounded;
+}
