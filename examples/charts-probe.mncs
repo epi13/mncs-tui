@@ -1,0 +1,18 @@
+mncs 0.8;
+
+module examples.charts_probe;
+
+use mncs.core.geometry.v1;
+use mncs_tui.charts;
+
+fn sparkline_levels() -> (result: i64) {
+    let area: Rect = Rect { origin: Point { column: 0, row: 0 }, size: Size { columns: 4, rows: 1 } };
+    let line: Sparkline = sparkline_make(area, 0, 100, [0, 25, 75, 100], 4);
+    return sparkline_level(line, 0) +% sparkline_level(line, 1) +% sparkline_level(line, 2) +% sparkline_level(line, 3);
+}
+
+fn sparkline_bounded_count() -> (result: bool) {
+    let area: Rect = Rect { origin: Point { column: 0, row: 0 }, size: Size { columns: 4, rows: 1 } };
+    let line: Sparkline = sparkline_make(area, 10, 10, [10, 20, 30, 40], 99);
+    return line.count == 4 && sparkline_has_point(line, 3) && chart_bool_not(sparkline_has_point(line, 4));
+}
