@@ -61,7 +61,8 @@ jobs:
           for source in \
             examples/first-layout.mncs \
             examples/full-demo.mncs \
-            examples/focused-tests.mncs \
+            examples/focused_tests.mncs \
+            examples/family_status.mncs \
             examples/render-probe.mncs \
             examples/interaction-probe.mncs \
             examples/backend-repro.mncs \
@@ -81,7 +82,7 @@ jobs:
         run: |
           set -euo pipefail
           "$MNCS_CLI" source-study examples/full-demo.mncs > /tmp/mncs-tui-full-demo-source-study.json
-          "$MNCS_CLI" source-study examples/focused-tests.mncs > /tmp/mncs-tui-focused-source-study.json
+          "$MNCS_CLI" source-study examples/focused_tests.mncs > /tmp/mncs-tui-focused-source-study.json
 
   test_layout:
     name: Layout solver tests
@@ -192,6 +193,70 @@ jobs:
           jq -e '.status == "returned" and .returned[0].integer.value == 1' /tmp/mncs-tui-render.json
           timeout 600s "$MNCS_CLI" execute examples/interaction-probe.mncs examples/execution/interaction-probe-request.json > /tmp/mncs-tui-interaction.json
           jq -e '.status == "returned" and .returned[0].integer.value == 1' /tmp/mncs-tui-interaction.json
+
+  test_native:
+    name: Native property suites and status projection
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: validate
+    steps:
+      - name: Checkout mncs-tui
+        uses: actions/checkout@v4
+        with:
+          path: mncs-tui
+
+      - name: Checkout mncs-language
+        uses: actions/checkout@v4
+        with:
+          repository: epi13/mncs-language
+          path: mncs-language
+
+      - name: Checkout mncs-test
+        uses: actions/checkout@v4
+        with:
+          repository: epi13/mncs-test
+          path: mncs-test
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            mncs-language/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build mncs-cli
+        working-directory: mncs-language
+        run: cargo build --release -p mncs-cli
+
+      - name: Run native property suites
+        working-directory: mncs-tui
+        env:
+          MNCS_CLI: ${{ github.workspace }}/mncs-language/target/release/mncs
+          MNCS_LIBRARY_PATH: ${{ github.workspace }}/mncs-test/native:${{ github.workspace }}/mncs-tui/src:${{ github.workspace }}/mncs-tui:${{ github.workspace }}/mncs-language/library
+        run: |
+          set -euo pipefail
+          "$MNCS_CLI" test tests/native/framework_properties.mncs --format json > /tmp/mncs-tui-native-framework.json
+          jq -e '.verdict == "PASS" and .summary.passed == 8' /tmp/mncs-tui-native-framework.json
+          "$MNCS_CLI" test tests/native/status_projection.mncs --format json > /tmp/mncs-tui-native-projection.json
+          jq -e '.verdict == "PASS" and .summary.passed == 9' /tmp/mncs-tui-native-projection.json
+
+      - name: Run status projection corpus and snapshot probe
+        working-directory: mncs-tui
+        env:
+          MNCS_CLI: ${{ github.workspace }}/mncs-language/target/release/mncs
+          MNCS_LIBRARY_PATH: ${{ github.workspace }}/mncs-language/library:${{ github.workspace }}/mncs-tui/src
+        run: |
+          set -euo pipefail
+          "$MNCS_CLI" experiment run examples/family_status.mncs --backend mncs-research-bytecode --corpus .github/workflows/corpus/family-status.json --output-dir /tmp/mncs-tui-family-status > /tmp/mncs-tui-family-status.json
+          jq -e '[.cases[] | select(.expectation_met != true)] | length == 0' /tmp/mncs-tui-family-status.json
+          timeout 300s "$MNCS_CLI" execute examples/family_status.mncs examples/execution/family-status-request.json > /tmp/mncs-tui-family-status-exec.json
+          jq -e '.status == "returned"' /tmp/mncs-tui-family-status-exec.json
 
   rust_checks:
     name: mncs-language Rust checks

@@ -79,3 +79,21 @@ Use the MNCS-family vocabulary consistently:
 - **exercised** — representative fixtures and checks have run;
 - **deferred** — intentionally postponed;
 - **blocked/unresolved** — dependent on missing upstream semantics or evidence.
+
+## 2026-09-26 modernization note
+
+Native verification and the projection role landed (see
+`docs/native-testing.md`, `docs/architecture.md`): `tests/native/`
+holds 17 property tests (8 framework laws, 9 projection contracts)
+run by `mncs test` with stable test identities; the focused corpus
+stands at 21/21 on the current toolchain after fixing a real
+upstream-contract bug (`distribute_extra4` now gates walk refill on
+weight eligibility — the upstream all-zero-weights result became
+valid-but-unallocated and the old walk filled lane 0 against the
+contract); `examples/family_status.mncs` demonstrates terminal
+projection over canonical state with a thin snapshot adapter and a
+7-case corpus; CI gained a `test_native` job. Remaining: production
+wiring of Forge receipts / test-result contracts into snapshots (needs
+a canonical per-repo verification-state query — filed as tooling
+pressure), a Doctor-planned profile migration off 0.8, and living
+terminal realization beyond the example probes.

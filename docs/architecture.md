@@ -116,7 +116,40 @@ The first useful verification targets are bounded and local:
 - terminal mode acquisition is paired with restoration on normal and failure paths;
 - a resize invalidates the correct layout/frame subjects.
 
-These are candidate obligations, not claims that the current scaffold proves them.
+Proven since the 2026-09-26 campaign (see `docs/native-testing.md`):
+regression-net predicates as native tests, space conservation over a
+24-case sweep, clipping containment with exact clipped extents, focus
+traversal totality, list-selection clamping, and empty-damage identity —
+plus the upstream-eligibility fix below.
+
+## Upstream-eligibility fix (2026-09-26)
+
+`distribute_extra4` used to trust `weighted.valid` alone and refill any
+lane with remaining capacity. When the upstream
+`mncs.core.partition.v1` contract made all-zero weights
+valid-but-unallocated, the walk filled the first capacious lane against
+the documented "zero-weight lane is not an eligible recipient" rule
+(`layout-negative-zero-weights` regressed to 0 on the current
+toolchain). The walk now gates refill shares on weight eligibility, so
+unfillable remainder stays leftover. Lesson recorded: upstream `valid`
+means "the primitive answered", not "every lane may receive".
+
+## Projection role (2026-09-26)
+
+The framework is a projection and interaction surface, not a source of
+truth. `examples/family_status.mncs` demonstrates the pattern: canonical
+state (Atlas roster, git HEAD/status, Commons pressure records) is
+queried by the thin `scripts/snapshot_family.py` adapter into a snapshot
+of verdict codes; the MNCS example only projects codes to verdicts,
+counts, glyphs, and selection state. PASS/FAIL/UNKNOWN are preserved
+exactly (UNKNOWN never merges into FAIL), empty snapshots render zero
+counts with clamped selection, and navigation clamps at both ends. The
+adapter's verdict mapping is an explicit demo policy, not family health;
+production wiring (Forge receipts / test-result contracts to codes)
+awaits a canonical per-repo verification-state query (filed as tooling
+pressure). No TUI-local pressure database, no private project registry,
+no Git porcelain: queries live in the adapter, semantics in MNCS, truth
+in the owning subsystems.
 
 ## Open design questions
 

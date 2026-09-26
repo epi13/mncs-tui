@@ -35,4 +35,4 @@ For every change, run the checks that are available for the current language rev
 - check documentation links and examples for internal consistency;
 - record unsupported or unresolved checks instead of silently skipping them.
 
-Future phases will add corpus, layout, frame-diff, terminal, and language-service tests. Their results should remain reproducible from repository-local inputs.
+Corpus, layout, frame-diff, terminal, and native-test results must remain reproducible from repository-local inputs. New framework laws go in `tests/native/` (see `docs/native-testing.md`); new pinned values go in `.github/workflows/corpus/`; snapshot plumbing stays in `scripts/`, never in MNCS. Keep file names and module segments identical (underscores, never hyphens) or imports fail to resolve.

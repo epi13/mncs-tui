@@ -51,12 +51,16 @@ src/
 examples/
   first-layout.mncs small rectangle fixture (bootstrap)
   full-demo.mncs    integrated demo exercising layout→render→diff→focus→terminal
-  focused-tests.mncs bounded semantic regressions for layout, render, tree, and events
+  focused_tests.mncs bounded semantic regressions for layout, render, tree, and events
+  family_status.mncs status-board projection over caller-supplied snapshots (codes in, verdicts/counts/glyphs/selection out)
   backend-repro.mncs minimized research-backend regression fixture
+tests/native/     native mncs-test property suites (framework laws, projection contracts)
+scripts/          thin snapshot adapter (canonical queries to corpus JSON; never MNCS semantics)
 docs/
   architecture.md   semantic pipeline and ownership boundaries
   roadmap.md        staged implementation plan and explicit non-goals
   contributing.md   development workflow and upstream feedback rules
+  native-testing.md two-layer verification model (corpora plus native suites)
 ```
 
 `src/` modules are now substantial MNCS implementations (Profile 0.8, bounded data, `select`/`vec`/`mask`). The upstream `mncs.core.geometry.v1` (in `mncs-language/library/core/geometry.mncs`) is the canonical primitive store; `mncs.core.partition.v1` owns weighted integer allocation; and `mncs.std.ansi.v1` owns ANSI/VT sequence meaning. `mncs_tui.geometry`, `mncs_tui.layout`, and `mncs_tui.events` adapt those authorities with TUI-specific contracts rather than duplicating them.
@@ -136,6 +140,19 @@ MNCS_LIBRARY_PATH="$PWD/../mncs-language/library:$PWD/src" \
 ```
 
 The focused source fixtures and the CI workflow use one source path per validation invocation. The research-bytecode backend is currently bounded by an explicit minimized regression fixture; the semantic body request remains the executable evidence for the layout result.
+
+Native property suites run through the compiler-owned `mncs test` command (see `docs/native-testing.md`):
+
+```bash
+export MNCS_LIBRARY_PATH="<mncs-test>/native:$PWD/src:$PWD:<mncs-language>/library"
+<mncs> test tests/native/framework_properties.mncs --format text
+<mncs> test tests/native/status_projection.mncs --format text
+```
+
+The TUI is a projection and interaction surface, not a source of truth:
+canonical state stays in Atlas/Commons/Store/Forge, `scripts/` adapts
+queries into snapshots, and MNCS projects snapshots into boards. See
+`docs/architecture.md` ("Projection role").
 
 Before proposing a change, read [the architecture](docs/architecture.md) and [contributing guide](docs/contributing.md). Every new capability should state whether it is an application concern, a framework concern, a language concern, or a service concern.
 

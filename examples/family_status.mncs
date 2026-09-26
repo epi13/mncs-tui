@@ -1,0 +1,74 @@
+mncs 0.8;
+
+// Projection example: a 4-row repository status board.
+//
+// The snapshot is DATA, not authority. Row verdict codes come from retained
+// verification evidence (see scripts/snapshot_family.py, which builds them
+// from canonical Atlas/Commons/git queries); this module only projects
+// codes to verdicts, counts, glyphs, and selection state. It owns no
+// repository topology, no execution policy, and no pressure semantics.
+//
+// PASS/FAIL/UNKNOWN are preserved exactly: verdict_from_code maps 0 to
+// PASS, 1 to FAIL, and anything else to UNKNOWN, and no path merges
+// UNKNOWN into FAIL. An empty snapshot (count 0) renders zero counts and
+// a clamped selection rather than erroring.
+module examples.family_status;
+
+use mncs_tui.render;
+
+enum RepoVerdict { PASS, FAIL, UNKNOWN }
+
+record BoardCounts { pass_count: i64, fail_count: i64, unknown_count: i64 }
+
+fn verdict_from_code(code: i64) -> (result: RepoVerdict) {
+    if code == 0 {
+        return RepoVerdict.PASS;
+    }
+    if code == 1 {
+        return RepoVerdict.FAIL;
+    }
+    return RepoVerdict.UNKNOWN;
+}
+
+fn code_from_verdict(verdict: RepoVerdict) -> (result: i64) {
+    return match verdict {
+        RepoVerdict.PASS => 0,
+        RepoVerdict.FAIL => 1,
+        RepoVerdict.UNKNOWN => 2,
+    };
+}
+
+fn count_verdict(statuses: [i64; 4], code: i64) -> (result: i64) {
+    iterate lane over statuses carrying tally: i64 = 0 {
+        next tally = tally +% select(statuses[lane] == code, 1, 0);
+    }
+    return tally;
+}
+
+fn board_counts(statuses: [i64; 4]) -> (result: BoardCounts) {
+    return BoardCounts { pass_count: count_verdict(statuses, 0), fail_count: count_verdict(statuses, 1), unknown_count: count_verdict(statuses, 2) };
+}
+
+fn verdict_glyph(verdict: RepoVerdict) -> (result: i64) {
+    return match verdict {
+        RepoVerdict.PASS => 80,
+        RepoVerdict.FAIL => 70,
+        RepoVerdict.UNKNOWN => 63,
+    };
+}
+
+fn board_frame(statuses: [i64; 4]) -> (result: Frame) {
+    return Frame { width: 4, height: 4, first: status_cell(statuses[0], 0), second: status_cell(statuses[1], 1), third: status_cell(statuses[2], 2), fourth: status_cell(statuses[3], 3) };
+}
+
+fn status_cell(code: i64, row: i64) -> (result: Cell) {
+    let verdict: RepoVerdict = verdict_from_code(code);
+    return Cell { column: 0, row: row, glyph: verdict_glyph(verdict), style: code_from_verdict(verdict) +% 1 };
+}
+
+fn move_selection(selected: i64, count: i64, down: bool) -> (result: i64) {
+    if down {
+        return select(selected +% 1 < count, selected +% 1, select(count == 0, 0, count -% 1));
+    }
+    return select(selected > 0, selected -% 1, 0);
+}

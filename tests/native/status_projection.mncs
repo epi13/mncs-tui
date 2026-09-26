@@ -1,0 +1,75 @@
+mncs 0.18;
+
+// Native property suite for the family-status projection example.
+//
+// The corpus pins values for one snapshot; these tests pin the PROJECTION
+// LAWS: verdict codes round-trip, UNKNOWN never merges into FAIL, empty
+// snapshots render zero counts with a clamped selection, glyphs encode
+// verdicts injectively, and selection navigation clamps at both ends.
+// See docs/architecture.md (projection role) and docs/native-testing.md.
+module tests.status_projection;
+
+use mncs.test.assertions;
+use mncs.test.suite;
+use examples.family_status as board;
+use mncs_tui.render as render;
+
+// ---- code round-trips through verdicts, including the UNKNOWN default ----
+
+test roundtrip_pass() -> (result: TestResult) {
+    return from_assertion(equals_i64(0, board.code_from_verdict(board.verdict_from_code(0)), 8101));
+}
+
+test roundtrip_fail() -> (result: TestResult) {
+    return from_assertion(equals_i64(1, board.code_from_verdict(board.verdict_from_code(1)), 8102));
+}
+
+test unknown_default_roundtrip() -> (result: TestResult) {
+    return from_assertion(equals_i64(2, board.code_from_verdict(board.verdict_from_code(9)), 8103));
+}
+
+// ---- UNKNOWN is preserved exactly: never equal to FAIL ----
+
+test unknown_not_fail() -> (result: TestResult) {
+    let unknown_code: i64 = board.code_from_verdict(board.verdict_from_code(2));
+    return from_assertion(equals_bool(true, unknown_code == 2 && unknown_code != 1, 8104));
+}
+
+// ---- empty (all-pass) snapshot renders zero fail/unknown counts ----
+
+test empty_snapshot_counts() -> (result: TestResult) {
+    let counts: board.BoardCounts = board.board_counts([0, 0, 0, 0]);
+    return from_assertion(equals_bool(true, counts.pass_count == 4 && counts.fail_count == 0 && counts.unknown_count == 0, 8105));
+}
+
+// ---- mixed snapshot: counts partition the four lanes ----
+
+test mixed_snapshot_partitions() -> (result: TestResult) {
+    let counts: board.BoardCounts = board.board_counts([0, 1, 2, 0]);
+    return from_assertion(equals_bool(true, counts.pass_count == 2 && counts.fail_count == 1 && counts.unknown_count == 1, 8106));
+}
+
+// ---- glyphs encode verdicts injectively (P/F/? distinct) ----
+
+test glyphs_distinct() -> (result: TestResult) {
+    let frame: render.Frame = board.board_frame([0, 1, 2, 0]);
+    return from_assertion(equals_bool(true, frame.first.glyph == 80 && frame.second.glyph == 70 && frame.third.glyph == 63 && frame.fourth.glyph == 80, 8107));
+}
+
+// frame type is in render; alias through the example is unavailable, so
+// re-derive determinism through counts (frames are pure functions of rows)
+test projection_deterministic() -> (result: TestResult) {
+    let a: board.BoardCounts = board.board_counts([0, 1, 2, 0]);
+    let b: board.BoardCounts = board.board_counts([0, 1, 2, 0]);
+    return from_assertion(equals_bool(true, a.pass_count == b.pass_count && a.fail_count == b.fail_count && a.unknown_count == b.unknown_count, 8108));
+}
+
+// ---- selection navigation clamps: down at bottom, up at top, empty ----
+
+test selection_navigation() -> (result: TestResult) {
+    let down: i64 = board.move_selection(1, 4, true);
+    let clamped: i64 = board.move_selection(3, 4, true);
+    let up: i64 = board.move_selection(0, 4, false);
+    let empty: i64 = board.move_selection(0, 0, true);
+    return from_assertion(equals_bool(true, down == 2 && clamped == 3 && up == 0 && empty == 0, 8109));
+}

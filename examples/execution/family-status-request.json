@@ -1,0 +1,14 @@
+{
+ "schema_version": "0.1",
+ "target": { "module": "examples.family_status", "function": "board_counts" },
+ "arguments": [
+  { "sequence": { "values": [
+   { "integer": { "value": 0, "type": { "bits": 64, "signed": true } } },
+   { "integer": { "value": 1, "type": { "bits": 64, "signed": true } } },
+   { "integer": { "value": 2, "type": { "bits": 64, "signed": true } } },
+   { "integer": { "value": 0, "type": { "bits": 64, "signed": true } } }
+  ] } }
+ ],
+ "step_budget": 20000,
+ "policy": { "allow_effects": false, "allow_unknown": false }
+}

@@ -1,0 +1,92 @@
+mncs 0.18;
+
+// Native property suite for the mncs-tui framework core.
+//
+// The focused-tests example predicates pin hand-picked values through
+// experiment corpora (see .github/workflows/corpus/focused.json). These
+// tests pin the LAWS over the same vocabulary: regression-net coverage,
+// space conservation under the solver, clipping containment, focus
+// traversal totality, and list-selection bounds. See
+// docs/native-testing.md for the two-layer model.
+module tests.framework_properties;
+
+use mncs.test.assertions;
+use mncs.test.suite;
+use mncs.test.generative;
+use mncs.core.geometry.v1 as geo;
+use mncs_tui.layout as layout;
+use mncs_tui.render as render;
+use mncs_tui.widgets as widgets;
+use mncs_tui.focus as focus;
+use examples.focused_tests as ft;
+
+// ---- regression net: the focused predicates hold as native tests ----
+
+test regression_layout() -> (result: TestResult) {
+    return from_assertion(equals_i64(1, ft.focused_layout(), 8001));
+}
+
+test regression_render() -> (result: TestResult) {
+    return from_assertion(equals_i64(1, ft.focused_render(), 8002));
+}
+
+test regression_interaction() -> (result: TestResult) {
+    return from_assertion(equals_i64(1, ft.focused_interaction(), 8003));
+}
+
+// ---- conservation: two equal grows always allocate exactly the total ----
+
+test conservation_sweep() -> (result: TestResult) {
+    let acc: bool = sweep_conservation();
+    return from_assertion(equals_bool(true, acc, 8004));
+}
+
+fn sweep_conservation() -> (result: bool) {
+    iterate i up_to 24 carrying acc: bool = true {
+        let total: i64 = (replay(31, i, 24) as i64) +% 1;
+        let solved: layout.RowSolveResult = layout.solve_widths4_checked(total, layout.make_grow_weighted(0, 100, 1), layout.make_grow_weighted(0, 100, 1), layout.make_fixed(0), layout.make_fixed(0));
+        next acc = acc && solved.allocated == total && solved.leftover == 0 && !solved.overflow;
+    }
+    return acc;
+}
+
+// ---- containment: a clipped child never escapes its parent ----
+
+test clipped_child_contained() -> (result: TestResult) {
+    let parent: widgets.Widget = widgets.Widget { id: widgets.WidgetId { value: 0 }, kind: widgets.WidgetKind.CONTAINER, parent: widgets.WidgetId { value: 0 - 1 }, rect: geo.Rect { origin: geo.Point { column: 0, row: 0 }, size: geo.Size { columns: 20, rows: 10 } }, focusable: false, visible: true };
+    let child: widgets.Widget = widgets.Widget { id: widgets.WidgetId { value: 1 }, kind: widgets.WidgetKind.PANE, parent: widgets.WidgetId { value: 0 }, rect: geo.Rect { origin: geo.Point { column: 15, row: 8 }, size: geo.Size { columns: 10, rows: 5 } }, focusable: false, visible: true };
+    let clipped: geo.Rect = widgets.widget_clipped_rect(child, parent.rect);
+    let clipped_child: widgets.Widget = widgets.Widget { id: child.id, kind: child.kind, parent: child.parent, rect: clipped, focusable: child.focusable, visible: child.visible };
+    let fx: i64 = clipped.origin.column +% clipped.size.columns -% 1;
+    let fy: i64 = clipped.origin.row +% clipped.size.rows -% 1;
+    let far: geo.Point = geo.Point { column: fx, row: fy };
+    return from_assertion(equals_bool(true, widgets.child_contains_point(parent, clipped_child, far) && clipped.size.columns == 5 && clipped.size.rows == 2, 8005));
+}
+
+// ---- focus traversal is total: init lands on a focusable, next stays valid ----
+
+test focus_init_and_next_valid() -> (result: TestResult) {
+    let tree: widgets.WidgetTree = ft.base_tree();
+    let init: focus.FocusState = focus.focus_init(tree);
+    let moved: focus.FocusState = focus.focus_move_next(init, tree);
+    return from_assertion(equals_bool(true, init.current.value == 2 && moved.current.value == 3, 8006));
+}
+
+// ---- list selection clamps at both ends, never escapes ----
+
+test list_selection_bounds() -> (result: TestResult) {
+    let top: widgets.ListState = widgets.ListState { selected: 0, count: 4, focused: true };
+    let bottom: widgets.ListState = widgets.ListState { selected: 3, count: 4, focused: true };
+    let up: widgets.ListState = widgets.list_move_up(top);
+    let down: widgets.ListState = widgets.list_move_down(bottom);
+    let middle: widgets.ListState = widgets.list_move_down(widgets.list_move_down(top));
+    return from_assertion(equals_bool(true, widgets.list_selected(up) == 0 && widgets.list_selected(down) == 3 && widgets.list_selected(middle) == 2, 8007));
+}
+
+// ---- damage honesty: identical frames are empty, moves are covered ----
+
+test damage_empty_iff_equal() -> (result: TestResult) {
+    let cell: render.Cell = render.Cell { column: 2, row: 3, glyph: 65, style: 1 };
+    let frame: render.Frame = render.Frame { width: 10, height: 5, first: cell, second: render.Cell { column: 0, row: 0, glyph: 0, style: 0 }, third: render.Cell { column: 0, row: 0, glyph: 0, style: 0 }, fourth: render.Cell { column: 0, row: 0, glyph: 0, style: 0 } };
+    return from_assertion(equals_bool(true, render.damage_is_empty(render.frame_damage(frame, frame)), 8008));
+}
