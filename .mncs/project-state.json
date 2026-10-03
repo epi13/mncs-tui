@@ -1,0 +1,17 @@
+{
+  "schema_version": "mncs.project-intent/1",
+  "purpose": "Machine-native terminal UI framework for MNCS: first-class geometry, constraint-based layout, structured rendering, and efficient terminal interaction, with a reusable Unix host realization.",
+  "entry": [
+    "cargo test --workspace"
+  ],
+  "milestones": [
+    {
+      "id": "mncs-tui:projection-conformance",
+      "title": "Declared ambient projection surfaces satisfy their contract",
+      "subject_slot": "declarations",
+      "evidence": "projection-conformance",
+      "dependencies": [],
+      "blockers": []
+    }
+  ]
+}

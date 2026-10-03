@@ -1,5 +1,8 @@
 # mncs-tui
 
+<!-- MNCS:generated:begin -->
+<!-- MNCS:generated:end -->
+
 Machine-native terminal UI framework for MNCS, built around first-class geometry, constraint-based layout, structured rendering, and efficient terminal interaction.
 
 > **Status: experimental semantic vertical slice.** `mncs-tui` has validated MNCS source for typed geometry, bounded constraint solving, structured cells/frames, damage projection, generic events, composable widgets, focus, hit-testing, terminal command planning, and bounded chart primitives. Its `mncs-tui-host` workspace member provides a reusable Unix realization for raw mode, alternate-screen lifecycle, input, resize, structured-frame diff writes, and cleanup. APIs remain experimental and not yet stable.
