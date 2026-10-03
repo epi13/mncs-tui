@@ -1,6 +1,19 @@
 # mncs-tui
 
 <!-- MNCS:generated:begin -->
+## Project entry
+
+Machine-native terminal UI framework for MNCS: first-class geometry, constraint-based layout, structured rendering, and efficient terminal interaction, with a reusable Unix host realization.
+
+```bash
+cargo test --workspace
+```
+
+Declared capabilities (declarations do not establish execution health):
+
+- `terminal-ui/0.1.0` — mncs-library (experimental)
+
+Semantic sources and ownership: `.mncs/projections.json`.
 <!-- MNCS:generated:end -->
 
 Machine-native terminal UI framework for MNCS, built around first-class geometry, constraint-based layout, structured rendering, and efficient terminal interaction.
