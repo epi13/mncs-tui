@@ -1,0 +1,17 @@
+{
+  "schema_version": "mncs-family.repository-manifest/v0alpha1",
+  "repository": "mncs-tui",
+  "revision": 1,
+  "manifest_location": "in-repository",
+  "authority": {"note": "TUI owns terminal UI framework semantics (geometry, constraint layout, structured rendering, events, widgets, focus, hit-testing, terminal command planning, charts) plus the mncs-tui-host Unix realization. The TUI is a projection and interaction surface, not a source of truth: canonical state stays in Atlas/Commons/Store/Forge, scripts/ adapts queries into snapshots, MNCS projects snapshots into boards."},
+  "contracts": {
+    "provides": [
+      {"contract": "terminal-ui", "version": "0.1.0", "kind": "mncs-library", "stability": "experimental", "fingerprint_sources": ["src/", "host/"]}
+    ],
+    "consumes": [],
+    "tests": [{"test": "tui-workspace-tests", "covers": ["terminal-ui"], "obligation": "self", "command": {"argv": ["cargo", "test", "--workspace"], "timeout_seconds": 1200}}]
+  }
+,
+  "projection_inventory": ".mncs/projections.json",
+  "structure_profile": {"repository": "machine-native-complexity-development-specification", "path": "profiles/semantic-project.json", "identity": "sha256:259e41ea542e7a1400f1471b0316de4fafc888d6f953c8e91165ff2cfe1e78cb"}
+}

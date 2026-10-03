@@ -1,0 +1,23 @@
+{
+  "capabilities": [
+    {
+      "contract": "terminal-ui",
+      "fingerprint_sources": [
+        "src/",
+        "host/"
+      ],
+      "kind": "mncs-library",
+      "stability": "experimental",
+      "version": "0.1.0"
+    }
+  ],
+  "dependencies": [],
+  "entry": [
+    "cargo test --workspace"
+  ],
+  "purpose": "Machine-native terminal UI framework for MNCS: first-class geometry, constraint-based layout, structured rendering, and efficient terminal interaction, with a reusable Unix host realization.",
+  "repository": "mncs-tui",
+  "schema_version": "mncs.project-view/1",
+  "source_identity": "sha256:4959ec03ec816767c2904c42104708cb8ad6c3e8bfd7ceafd0077a952ec40f5e",
+  "structure": {}
+}
